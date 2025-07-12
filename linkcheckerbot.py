@@ -271,7 +271,7 @@ async def on_message(message):
 
         elif content == "lc!reload blacklist":
             load_blacklist()
-            await message.channel.send("🔄 Blacklist reloaded from file.")
+            await message.channel.send("Blacklist reloaded from file.")
             return
 
         elif content == "lc!help":
