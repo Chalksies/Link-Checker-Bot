@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 import base64
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 #load .env
 load_dotenv()
@@ -105,53 +105,55 @@ async def scan_worker():
     async with aiohttp.ClientSession() as session:
         while True:
             message, url = await scan_queue.get()
-
-            if any(blacklisted in url for blacklisted in BLACKLIST):
-                try:
-                    await message.delete()
-                    logging.info(
-                        f"[BLACKLIST] Deleted message from {message.author} ({message.author.id}) | URL: {url}"
-                    )
-                    log_channel = client.get_channel(LOG_CHANNEL_ID)
-                    if log_channel:
-                        await log_channel.send(
-                            f"**Blocked** a message from {message.author.mention}\n (Contained a blacklisted URL)\n"
-                            f"> `{url}`\n"
-                            f"> `{datetime.utcnow().isoformat()} UTC`"
-                        )
-                    
-                    await message.channel.send(
-                        f"Blacklisted link from {message.author.mention} was removed.\n"
-                        f"A link in the message was blacklisted by the moderators."
-                        )
-                    
-                except discord.Forbidden:
-                    await message.channel.send("Tried to delete a blacklisted link but I lack permissions!")
-                await asyncio.sleep(SCAN_INTERVAL)
-                scan_queue.task_done()
-                continue
-
-            if any(whitelisted in url for whitelisted in WHITELIST):
-                scan_queue.task_done()
-                continue
-
+            norm_url = url.lower().strip()
+            print(f"> Processing URL: {url} from {message.author} ({message.author.id})")
             try:
-                report = await virus_total_lookup(session, url)
+                #check blacklist first
+                if any(blacklisted in norm_url for blacklisted in BLACKLIST):
+                    try:
+                        await message.delete()
+                        logging.info(f"[BLACKLIST] Deleted message from {message.author} ({message.author.id}) | URL: {url}")
+                        log_channel = client.get_channel(LOG_CHANNEL_ID)
+                        if log_channel:
+                            await log_channel.send(
+                                f"**Blocked** a message from {message.author.mention}\n"
+                                f"> `{url}`\n"
+                                f"> `{datetime.now(timezone.utc).isoformat()} UTC`"
+                            )
+                        try:
+                            await message.channel.send(
+                                f"Blacklisted link from {message.author.mention} was removed.\n"
+                                f"A link in the message was blacklisted by the moderators."
+                            )
+                        except Exception as e:
+                            logging.warning(f"Couldn't send public message: {e}")
+                        print(f"Blacklisted URL removed: {url}")
+                    except discord.Forbidden:
+                        await message.channel.send("I tried to delete a blacklisted link but lack permissions.")
+                    continue  #skip virustotal scan
+
+                #check whitelist
+                if any(whitelisted in norm_url for whitelisted in WHITELIST):
+                    continue
+
+                #skip vt scan if already processed
+                if norm_url in last_scanned_urls:
+                    continue
+                last_scanned_urls.add(norm_url)
+
+                #virustotal scan
+                report = await virus_total_lookup(session, norm_url)
                 stats = report["data"]["attributes"]["last_analysis_stats"]
                 total_detections = stats.get("malicious", 0)
 
                 if total_detections > 0:
                     try:
                         await message.delete()
-
-                        #log to file
                         logging.info(
                             f"Deleted message from {message.author} ({message.author.id}) | "
                             f"URL: {url} | Detections: {total_detections} | "
                             f"Channel: #{message.channel.name} ({message.channel.id})"
                         )
-
-                        #log to discord channel
                         log_channel = client.get_channel(LOG_CHANNEL_ID)
                         if log_channel:
                             await log_channel.send(
@@ -159,29 +161,30 @@ async def scan_worker():
                                 f"> User: {message.author.mention} (`{message.author.id}`)\n"
                                 f"> Channel: {message.channel.mention}\n"
                                 f"> URL: `{url}`\n"
-                                f"> Detections: `{total_detections}` engines flagged it\n"
-                                f"> Time: `{datetime.utcnow().isoformat()} UTC`"
+                                f"> Detections: `{total_detections}`\n"
+                                f"> Time: `{datetime.now(timezone.utc).isoformat()} UTC`"
                             )
-
-                        #public warning
                         await message.channel.send(
-                        f"Malicious link from {message.author.mention} was removed.\n"
-                        f"A link in the message was flagged by VirusTotal ({total_detections} detections)."
+                            f"Malicious link from {message.author.mention} was removed.\n"
+                            f"A link was flagged by VirusTotal ({total_detections} detections)."
                         )
-                        print(f"Malicious URL detected: {url} - {total_detections} detections")
-
                     except discord.Forbidden:
-                        await message.channel.send(f"Tried to delete a malicious message but I lack permissions!")
+                        await message.channel.send("I tried to delete a malicious link but lack permissions.")
                 else:
-                    #await message.channel.send(f"VirusTotal scan shows no issues for: {url}")
-                    print (f"Safe URL: {url}")
-            except Exception as e:
-                #await message.channel.send(f"Error scanning {url}: {e}")
-                print(f"Error scanning {url}: {e}")
-                await log_channel.send(f"Error scanning {url}: {e}. Contact Chalk if this continues.")
+                    print(f"Safe: {url}")
 
-            await asyncio.sleep(SCAN_INTERVAL)
-            scan_queue.task_done()
+                await asyncio.sleep(SCAN_INTERVAL)
+
+            except Exception as e:
+                logging.error(f"Exception in scan_worker: {e}")
+                log_channel = client.get_channel(LOG_CHANNEL_ID)
+                if log_channel:
+                    await log_channel.send(f"Error during scan: `{e}`\nURL: `{url}`")
+            finally:
+                #always mark task as done
+                print("> Task done for URL:", url)
+                scan_queue.task_done()
+
 
 #----------------------- bot stuff -----------------------
 @client.event
@@ -298,8 +301,6 @@ async def on_message(message):
     urls = re.findall(URL_REGEX, message.content)
     for url in urls:
         norm_url = url.lower().strip()
-        if norm_url not in last_scanned_urls:
-            last_scanned_urls.add(norm_url)
-            await scan_queue.put((message, norm_url))
+        await scan_queue.put((message, norm_url))
 
 client.run(DISCORD_TOKEN)
