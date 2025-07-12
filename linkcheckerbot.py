@@ -111,7 +111,7 @@ async def scan_worker():
             #blacklist check
             if any(blacklisted in norm_url for blacklisted in BLACKLIST):
                 await message.delete()
-                logging.info(f"[BLACKLIST] Deleted {url}")
+                logging.info(f"[BLACKLIST] Deleted message with blacklisted link: {norm_url} from {message.author} ({message.author.id})")
                 await message.channel.send("A blacklisted link was removed.")
                 log_channel = client.get_channel(LOG_CHANNEL_ID)
                 if log_channel:
@@ -143,6 +143,7 @@ async def vt_worker():
     async with aiohttp.ClientSession() as session:
         while True:
             message, url = await vt_queue.get()
+            norm_url = url.lower().strip()
 
             try:
                 #submit, wait, fetch
@@ -151,6 +152,8 @@ async def vt_worker():
                 detections = stats.get("malicious", 0)
 
                 if detections > 0:
+                    BLACKLIST.add(norm_url)
+                    save_blacklist()
                     await message.delete()
                     await message.channel.send(
                         f"Malicious link from {message.author.mention} removed "
@@ -159,13 +162,15 @@ async def vt_worker():
                     log_channel = client.get_channel(LOG_CHANNEL_ID)
                     if log_channel:
                         await log_channel.send(
-                            f"`{url}` flagged by VirusTotal and removed.\n"
+                            f"`{url}` flagged by VirusTotal. Message was removed, and the URL was blacklisted.\n"
                             f" Detections: {detections}.\n"
                             f" Message author: {message.author.mention} ({message.author.id})\n"
                             f" Timestamp: {datetime.now(timezone.utc).isoformat()}"
                         )
+                    logging.info(f"[MALICIOUS] Deleted message with malicious link: {url} from {message.author} ({message.author.id})")
                 else:
                     print(f"Clean: {url}")
+                    logging.info(f"[CLEAN] Link {url} has no detections.")
 
             except Exception as e:
                 logging.error(f"VT worker error: {e}")
@@ -233,7 +238,7 @@ async def on_message(message):
                 )
             return
 
-        elif content == "lc!reload whitelist":
+        elif content == "lc!reload whitelist" or content == "lc!whitelist reload":
             load_whitelist()
             await message.channel.send("Whitelist reloaded from file.")
             return
@@ -264,7 +269,7 @@ async def on_message(message):
                 )
             return
 
-        elif content == "lc!reload blacklist":
+        elif content == "lc!reload blacklist"  or content == "lc!blacklist reload":
             load_blacklist()
             await message.channel.send("Blacklist reloaded from file.")
             return
@@ -277,10 +282,12 @@ async def on_message(message):
                 "lc!whitelist remove <domain> - Remove domain from whitelist\n"
                 "lc!whitelist show            - Show whitelisted domains\n"
                 "lc!reload whitelist          - Reload whitelist from file\n"
+                "lc!whitelist reload          - Same as above\n"
                 "lc!blacklist add <domain>    - Add domain to blacklist\n"
                 "lc!blacklist remove <domain> - Remove domain from blacklist\n"
                 "lc!blacklist show            - Show blacklisted domains\n"
                 "lc!reload blacklist          - Reload blacklist from file\n"
+                "lc!blacklist reload          - Same as above\n"
                 "lc!help                      - Show this help message\n"
                 "```"
             )

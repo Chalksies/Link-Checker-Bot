@@ -23,4 +23,5 @@ Commands:
 - "lc!blacklist show            - Show blacklisted domains"  
 - "lc!reload blacklist          - Reload blacklist from file"  
 - "lc!help                      - Show help message"  
-  
+----------------------------------------
+Made for r/traaaaaaannnnnnnnnns2 official Discord server by Chalk.
