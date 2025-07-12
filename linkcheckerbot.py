@@ -86,7 +86,7 @@ async def virus_total_lookup(session, url):
             raise Exception(f"URL submission failed: HTTP {resp.status}")
         submission = await resp.json()
 
-    await asyncio.sleep(15)  #wait before requesting report
+    await asyncio.sleep(10)  #wait before requesting report
 
     #fetch report using base64url-encoded URL
     report_url = f"{scan_url}/{vt_url_id(url)}"
@@ -110,7 +110,7 @@ async def scan_worker():
                 try:
                     await message.delete()
                     logging.info(
-                        f"[BLACKLIST] Deleted message from {message.author} | URL: {url}"
+                        f"[BLACKLIST] Deleted message from {message.author} ({message.author.id}) | URL: {url}"
                     )
                     log_channel = client.get_channel(LOG_CHANNEL_ID)
                     if log_channel:
