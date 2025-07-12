@@ -14,12 +14,12 @@ Setting up:
 - Run the python script. The bot will scan each message, immediately delete it if it's on the blacklist, don't touch it if it's on the whitelist, and scan it via VirusTotal if it's on neither of those. If the message contains a malicious link, it will be removed.  
 ----------------------------------------
 Commands:
-- "lc!whitelist add <domain>    - Add domain to whitelist"  
-- "lc!whitelist remove <domain> - Remove domain from whitelist"  
+- "lc!whitelist add \<domain>    - Add domain to whitelist"  
+- "lc!whitelist remove \<domain> - Remove domain from whitelist"  
 - "lc!whitelist show            - Show whitelisted domains"  
 - "lc!reload whitelist          - Reload whitelist from file"  
-- "lc!blacklist add <domain>    - Add domain to blacklist"  
-- "lc!blacklist remove <domain> - Remove domain from blacklist"  
+- "lc!blacklist add \<domain>    - Add domain to blacklist"  
+- "lc!blacklist remove \<domain> - Remove domain from blacklist"  
 - "lc!blacklist show            - Show blacklisted domains"  
 - "lc!reload blacklist          - Reload blacklist from file"  
 - "lc!help                      - Show help message"  
