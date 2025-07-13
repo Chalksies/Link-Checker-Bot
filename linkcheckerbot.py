@@ -3,26 +3,55 @@ import re
 import aiohttp
 import asyncio
 import os
-from dotenv import load_dotenv
 import base64
 import logging
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
+import tomli
 
-#load .env
-load_dotenv()
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-VT_API_KEY = os.getenv("VT_API_KEY")
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID")) 
-SILLY_MODE_USER_ID = int(os.getenv("SILLY_MODE_USER_ID"))
+DEFAULT_CONFIG = """
+[bot]
+discord_token = "YOUR_DISCORD_TOKEN"
+silly_mode = 0
 
-#constants
-API_RATE_LIMIT = 4 #requests per minute
-SCAN_INTERVAL = 60 / API_RATE_LIMIT 
-MAX_MALICIOUS_MESSAGES = 3
-VIOLATION_WINDOW = timedelta(minutes=2)
+[virustotal]
+api_key = "YOUR_VIRUSTOTAL_API_KEY"
+scan_interval_seconds = 10
+rate_limit_per_minute = 4
 
-WHITELIST_PATH = "whitelist.txt"
+[moderation]
+log_channel_id = 0
+max_violations = 3
+violation_window_minutes = 2
+
+[structure]
+whitelist_path = "whitelist.txt"
+blacklist_path = "blacklist.txt"
+logging_path = "logs"
+"""
+
+if not os.path.exists("config.toml"):
+    with open("config.toml", "w") as f:
+        f.write(DEFAULT_CONFIG)
+    print("Default config.toml created. Please edit it with your settings and restart the bot.")
+    exit(1)
+
+config = tomli.load(open("config.toml", "rb"))
+
+DISCORD_TOKEN = config["bot"]["discord_token"]
+VT_API_KEY = config["virustotal"]["api_key"]
+
+LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
+SILLY_MODE = int(config["bot"]["silly_mode"])
+SCAN_INTERVAL = config["virustotal"]["scan_interval_seconds"]
+RATE_LIMIT_PER_MINUTE = config["virustotal"]["rate_limit_per_minute"]
+MAX_MALICIOUS_MESSAGES = config["moderation"]["max_violations"]
+VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minutes"])
+
+WHITELIST_PATH = config["structure"]["whitelist_path"]
+BLACKLIST_PATH = config["structure"]["blacklist_path"]
+LOGGING_PATH = config["structure"]["logging_path"]
+
 WHITELIST = set()
 
 def load_whitelist():
@@ -37,7 +66,7 @@ def save_whitelist():
     with open(WHITELIST_PATH, "w") as f:
         f.write("\n".join(sorted(WHITELIST)))
 
-BLACKLIST_PATH = "blacklist.txt"
+
 BLACKLIST = set()
 
 def load_blacklist():
@@ -118,6 +147,7 @@ async def scan_worker():
             if message.author.guild_permissions.manage_messages:
                 #if the user has manage_messages permission, skip checks
                 logging.info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to permissions.")
+                print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to permissions.")
                 continue
 
             #blacklist check
@@ -278,7 +308,7 @@ async def on_message(message):
 
     content = message.content.strip()
     if client.user in message.mentions:
-        if message.author.id == SILLY_MODE_USER_ID:
+        if SILLY_MODE == 1:
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
                 await message.channel.send("Yes ma'am!")
                 return
