@@ -9,28 +9,28 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import tomli
 
-DEFAULT_CONFIG = """
-[bot]
-discord_token = "YOUR_DISCORD_TOKEN"
-silly_mode = 0
-
-[virustotal]
-api_key = "YOUR_VIRUSTOTAL_API_KEY"
-scan_interval_seconds = 10
-rate_limit_per_minute = 4
-
-[moderation]
-log_channel_id = 0
-max_violations = 3
-violation_window_minutes = 2
-
-[structure]
-whitelist_path = "whitelist.txt"
-blacklist_path = "blacklist.txt"
-logging_path = "logs"
-"""
-
 if not os.path.exists("config.toml"):
+    DEFAULT_CONFIG = """
+        [bot]
+        discord_token = "YOUR_DISCORD_TOKEN"
+        silly_mode = 0
+
+        [virustotal]
+        api_key = "YOUR_VIRUSTOTAL_API_KEY"
+        scan_interval_seconds = 10
+        rate_limit_per_minute = 4
+
+        [moderation]
+        log_channel_id = 0
+        max_violations = 3
+        violation_window_minutes = 2
+
+        [structure]
+        whitelist_path = "whitelist.txt"
+        blacklist_path = "blacklist.txt"
+        logging_path = "logs"
+        """
+    
     with open("config.toml", "w") as f:
         f.write(DEFAULT_CONFIG)
     print("Default config.toml created. Please edit it with your settings and restart the bot.")
@@ -142,7 +142,7 @@ async def scan_worker():
     while True:
         message, url, is_attempting_bypass = await scan_queue.get()
         norm_url = url.lower().strip()
-        print(f"Processing: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
+        print(f"Processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
 
         try:
             if message.author.guild_permissions.manage_messages:
@@ -189,14 +189,14 @@ async def scan_worker():
 
             #queue for vt
             await vt_queue.put((message, norm_url, is_attempting_bypass))
-            print(f"Queued for VirusTotal: {norm_url}")
+            print(f"Queued for VirusTotal: {url}")
             last_scanned_urls.add(norm_url)
 
         except Exception as e:
             logging.error(f"Error in scan_worker: {e}")
         finally:
             scan_queue.task_done()
-            print(f"Finished processing: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
+            print(f"Finished processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
 
 async def vt_worker():
     async with aiohttp.ClientSession() as session:
@@ -314,7 +314,7 @@ async def on_message(message):
         return
 
     content = message.content.strip()
-    if client.user in message.mentions:
+    if client.user in message.mentions and message.author.guild_permissions.manage_messages:
         if SILLY_MODE == 1:
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
                 await message.channel.send("Yes ma'am!")
