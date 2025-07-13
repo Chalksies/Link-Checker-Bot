@@ -2,9 +2,10 @@
 
 ----------------------------------------
 Features: 
-- Auto-remove malicious links.  
-- A whitelist and blacklist that can be manipulated from discord via the `lc!` prefix.  
+- Auto-remove malicious links
+- A whitelist and blacklist that can be manipulated from discord via the `lc!` prefix.
 - Logging (on device and on discord)
+- Malicious spam detection
 ----------------------------------------
 Setting up:  
 - Create bot via Discord Developer Portal
