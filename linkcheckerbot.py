@@ -6,7 +6,8 @@ import os
 from dotenv import load_dotenv
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from collections import defaultdict
 
 #load .env
 load_dotenv()
@@ -17,6 +18,8 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 #constants
 API_RATE_LIMIT = 4 #requests per minute
 SCAN_INTERVAL = 60 / API_RATE_LIMIT 
+MAX_MALICIOUS_MESSAGES = 3
+VIOLATION_WINDOW = timedelta(minutes=2)
 
 WHITELIST_PATH = "whitelist.txt"
 WHITELIST = set()
@@ -66,11 +69,14 @@ logging.basicConfig(
 #queue to control rate-limited API use
 vt_queue = asyncio.Queue()
 scan_queue = asyncio.Queue()
+
 last_scanned_urls = set()
+scans_in_progress = {} 
 
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
+user_violations = defaultdict(list)  # track user violations
 
 def vt_url_id(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
@@ -104,7 +110,7 @@ async def virus_total_lookup(session, url):
 #worker to process the scan queue
 async def scan_worker():
     while True:
-        message, url = await scan_queue.get()
+        message, url, is_attempting_bypass = await scan_queue.get()
         norm_url = url.lower().strip()
 
         try:
@@ -120,6 +126,16 @@ async def scan_worker():
                         f" Message author: {message.author.mention} ({message.author.id})\n"
                         f" Timestamp: {datetime.now(timezone.utc).isoformat()}"
                     )
+                if is_attempting_bypass:
+                    await message.channel.send(
+                        f"{message.author.mention}, you attempted to bypass the link checker logic via disguising it as a command. This incident will be reported."
+                    )
+                    if log_channel:
+                        await log_channel.send(
+                            f"User {message.author.mention} ({message.author.id}) attempted to bypass the link checker via disguising it as a command.\n"
+                            f"Link: `{url}`\n"
+                            f"Timestamp: {datetime.now(timezone.utc).isoformat()}"
+                        )
                 continue
 
             #already scanned (skip)
@@ -131,7 +147,7 @@ async def scan_worker():
                 continue
 
             #queue for vt
-            await vt_queue.put((message, norm_url))
+            await vt_queue.put((message, norm_url, is_attempting_bypass))
             last_scanned_urls.add(norm_url)
 
         except Exception as e:
@@ -142,42 +158,102 @@ async def scan_worker():
 async def vt_worker():
     async with aiohttp.ClientSession() as session:
         while True:
-            message, url = await vt_queue.get()
+            message, url, is_attempting_bypass = await vt_queue.get()
             norm_url = url.lower().strip()
 
+            #default to no deferred messages
+            deferred_messages = []
+
             try:
-                #submit, wait, fetch
+                #virusTotal Scan
                 report = await virus_total_lookup(session, url)
                 stats = report["data"]["attributes"]["last_analysis_stats"]
                 detections = stats.get("malicious", 0)
 
+                #always clean up the currently being scanned queue
+                deferred_messages = scans_in_progress.pop(norm_url, [])
+
                 if detections > 0:
+                    log_channel = client.get_channel(LOG_CHANNEL_ID)
+                    #blacklist and save
                     BLACKLIST.add(norm_url)
                     save_blacklist()
-                    await message.delete()
-                    await message.channel.send(
-                        f"Malicious link from {message.author.mention} removed "
-                        f"({detections} detections on VirusTotal)."
-                    )
-                    log_channel = client.get_channel(LOG_CHANNEL_ID)
+
+                    #delete original
+                    try:
+                        await message.delete()
+                        await check_user_violations(message.author, message.channel)
+                        await message.channel.send(
+                            f"Malicious link from {message.author.mention} removed.\n"
+                            f"({detections} detections on VirusTotal)"
+                        )
+                        logging.info(f"[MALICIOUS] Deleted: {url} from {message.author} ({message.author.id})")
+                        if log_channel:
+                            await log_channel.send(
+                                f"`{url}` flagged as malicious by VirusTotal ({detections} detections).\n"
+                                f"Message deleted.\n"
+                                f"Sender: {message.author.mention} ({message.author.id})\n"
+                                f"Time: `{datetime.now(timezone.utc).isoformat()}`"
+                            )
+
+                    except Exception as e:
+                        logging.warning(f"Failed to delete original malicious message: {e}")
+
+
+                    #delete all deferred copies
+                    delete_count = 0
+                    for msg in deferred_messages:
+                        try:
+                            await msg.delete()
+                            await msg.channel.send(
+                                f"Malicious link from {msg.author.mention} was removed based on recent scan."
+                            )
+                            await check_user_violations(message.author, message.channel)
+                            delete_count += 1
+                        except Exception as e:
+                            logging.warning(f"Failed to delete deferred message: {e}")
+
+                    #log result to moderation channel
                     if log_channel:
                         await log_channel.send(
-                            f"`{url}` flagged by VirusTotal. Message was removed, and the URL was blacklisted.\n"
-                            f" Detections: {detections}.\n"
-                            f" Message author: {message.author.mention} ({message.author.id})\n"
-                            f" Timestamp: {datetime.now(timezone.utc).isoformat()}"
+                            f"`{url}` flagged as malicious by VirusTotal ({detections} detections).\n"
+                            f"Original + {delete_count} duplicate messages were removed.\n"
+                            f"Original sender: {message.author.mention} ({message.author.id})\n"
+                            f"Time: `{datetime.now(timezone.utc).isoformat()}`"
                         )
-                    logging.info(f"[MALICIOUS] Deleted message with malicious link: {url} from {message.author} ({message.author.id})")
+
                 else:
+                    #safe link
                     print(f"Clean: {url}")
-                    logging.info(f"[CLEAN] Link {url} has no detections.")
+                    logging.info(f"[CLEAN] {url} had no detections.")
 
             except Exception as e:
-                logging.error(f"VT worker error: {e}")
+                logging.error(f"[VT Worker Error] Failed to scan {url}: {e}")
+                #still pop on error to avoid locking queue
+                scans_in_progress.pop(norm_url, None)
 
             finally:
-                await asyncio.sleep(SCAN_INTERVAL)  # rate limit enforcement
+                await asyncio.sleep(SCAN_INTERVAL)
                 vt_queue.task_done()
+
+async def check_user_violations(user, message_channel):
+    now = datetime.now(timezone.utc)
+    user_violations[user.id].append(now)
+
+    # Keep only recent violations
+    user_violations[user.id] = [
+        t for t in user_violations[user.id] if now - t <= VIOLATION_WINDOW
+    ]
+
+    if len(user_violations[user.id]) >= MAX_MALICIOUS_MESSAGES:
+        log_channel = client.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            await log_channel.send(
+                f"**User {user.mention} flagged for possible spam!**\n"
+                f"{len(user_violations[user.id])} malicious messages in the past {VIOLATION_WINDOW.total_seconds() // 60:.0f} minutes.\n"
+                f"Manual moderation is recommended."
+            )
+        logging.info(f"User {user} exceeded malicious message threshold.")
 
 
 
@@ -200,15 +276,16 @@ async def on_message(message):
     if content.startswith("lc!"):
         #check permission
         if not message.author.guild_permissions.manage_messages:
-            await message.channel.send("You don't have permission to configure the bot!")
+            await message.channel.send("You don't have permission to configure the bot.")
 
             #check if the user is trying to bypass the link checker
             urls = re.findall(URL_REGEX, message.content)
             for url in urls:
                 norm_url = url.lower().strip()
                 if norm_url not in last_scanned_urls:
+                    is_attempting_bypass = True
                     last_scanned_urls.add(norm_url)
-                    await scan_queue.put((message, norm_url))
+                    await scan_queue.put((message, norm_url, is_attempting_bypass))
             return
 
         #command parsing
@@ -300,6 +377,7 @@ async def on_message(message):
     urls = re.findall(URL_REGEX, message.content)
     for url in urls:
         norm_url = url.lower().strip()
-        await scan_queue.put((message, norm_url))
+        is_attempting_bypass = False
+        await scan_queue.put((message, norm_url, is_attempting_bypass))
 
 client.run(DISCORD_TOKEN)
