@@ -14,6 +14,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 VT_API_KEY = os.getenv("VT_API_KEY")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID")) 
+SILLY_MODE_USER_ID = int(os.getenv("SILLY_MODE_USER_ID"))
 
 #constants
 API_RATE_LIMIT = 4 #requests per minute
@@ -276,6 +277,11 @@ async def on_message(message):
         return
 
     content = message.content.strip()
+    if client.user in message.mentions:
+        if message.author.id == SILLY_MODE_USER_ID:
+            if message.content == f"<@{client.user.id}>, drone strike this users home.":
+                await message.channel.send("Yes ma'am!")
+                return
 
     #handle commands
     if content.startswith("lc!"):
