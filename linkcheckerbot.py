@@ -91,7 +91,7 @@ URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
 #setup file logger
 os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
-    filename="logs/malicious_links.log",
+    filename=f"{LOGGING_PATH}",
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
@@ -142,6 +142,7 @@ async def scan_worker():
     while True:
         message, url, is_attempting_bypass = await scan_queue.get()
         norm_url = url.lower().strip()
+        print(f"Processing: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
 
         try:
             if message.author.guild_permissions.manage_messages:
@@ -176,20 +177,26 @@ async def scan_worker():
 
             #already scanned (skip)
             if norm_url in last_scanned_urls:
+                logging.info(f"Skipping because already scanned: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
+                print(f"Already scanned: {norm_url}")
                 continue
 
             #whitelist check (skip)
             if any(whitelisted in norm_url for whitelisted in WHITELIST):
+                logging.info(f"Skipping whitelisted link: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
+                print(f"Skipping whitelisted link: {norm_url}")
                 continue
 
             #queue for vt
             await vt_queue.put((message, norm_url, is_attempting_bypass))
+            print(f"Queued for VirusTotal: {norm_url}")
             last_scanned_urls.add(norm_url)
 
         except Exception as e:
             logging.error(f"Error in scan_worker: {e}")
         finally:
             scan_queue.task_done()
+            print(f"Finished processing: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
 
 async def vt_worker():
     async with aiohttp.ClientSession() as session:
