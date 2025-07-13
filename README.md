@@ -10,7 +10,7 @@ Features:
 Setting up:  
 - Create bot via Discord Developer Portal
 - Clone this repository
-- Set up a `.env` file inside the folder, that includes your bot's token as `DISCORD_TOKEN=`, your VirusTotal api as `VT_API_KEY=` and a channel id for logging as `LOG_CHANNEL_ID=`  
+- Run the script once and follow instructions.
 - Set up a whitelist.txt and a blacklist.txt, with each line contatining one link (syntax: discord.com)  
 - Run the python script. The bot will scan each message, immediately delete it if it's on the blacklist, don't touch it if it's on the whitelist, and scan it via VirusTotal if it's on neither of those. If the message contains a malicious link, it will be removed.  
 ----------------------------------------

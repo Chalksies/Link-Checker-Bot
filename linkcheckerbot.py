@@ -3,26 +3,55 @@ import re
 import aiohttp
 import asyncio
 import os
-from dotenv import load_dotenv
 import base64
 import logging
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
+import tomli
 
-#load .env
-load_dotenv()
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-VT_API_KEY = os.getenv("VT_API_KEY")
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID")) 
-SILLY_MODE_USER_ID = int(os.getenv("SILLY_MODE_USER_ID"))
+if not os.path.exists("config.toml"):
+    DEFAULT_CONFIG = """
+        [bot]
+        discord_token = "YOUR_DISCORD_TOKEN"
+        silly_mode = 0
 
-#constants
-API_RATE_LIMIT = 4 #requests per minute
-SCAN_INTERVAL = 60 / API_RATE_LIMIT 
-MAX_MALICIOUS_MESSAGES = 3
-VIOLATION_WINDOW = timedelta(minutes=2)
+        [virustotal]
+        api_key = "YOUR_VIRUSTOTAL_API_KEY"
+        scan_interval_seconds = 10
+        rate_limit_per_minute = 4
 
-WHITELIST_PATH = "whitelist.txt"
+        [moderation]
+        log_channel_id = 0
+        max_violations = 3
+        violation_window_minutes = 2
+
+        [structure]
+        whitelist_path = "whitelist.txt"
+        blacklist_path = "blacklist.txt"
+        logging_path = "logs"
+        """
+    
+    with open("config.toml", "w") as f:
+        f.write(DEFAULT_CONFIG)
+    print("Default config.toml created. Please edit it with your settings and restart the bot.")
+    exit(1)
+
+config = tomli.load(open("config.toml", "rb"))
+
+DISCORD_TOKEN = config["bot"]["discord_token"]
+VT_API_KEY = config["virustotal"]["api_key"]
+
+LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
+SILLY_MODE = int(config["bot"]["silly_mode"])
+SCAN_INTERVAL = config["virustotal"]["scan_interval_seconds"]
+RATE_LIMIT_PER_MINUTE = config["virustotal"]["rate_limit_per_minute"]
+MAX_MALICIOUS_MESSAGES = config["moderation"]["max_violations"]
+VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minutes"])
+
+WHITELIST_PATH = config["structure"]["whitelist_path"]
+BLACKLIST_PATH = config["structure"]["blacklist_path"]
+LOGGING_PATH = config["structure"]["logging_path"]
+
 WHITELIST = set()
 
 def load_whitelist():
@@ -37,7 +66,7 @@ def save_whitelist():
     with open(WHITELIST_PATH, "w") as f:
         f.write("\n".join(sorted(WHITELIST)))
 
-BLACKLIST_PATH = "blacklist.txt"
+
 BLACKLIST = set()
 
 def load_blacklist():
@@ -62,7 +91,7 @@ URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
 #setup file logger
 os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
-    filename="logs/malicious_links.log",
+    filename=f"{LOGGING_PATH}",
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
@@ -113,11 +142,13 @@ async def scan_worker():
     while True:
         message, url, is_attempting_bypass = await scan_queue.get()
         norm_url = url.lower().strip()
+        #print(f"Processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
 
         try:
             if message.author.guild_permissions.manage_messages:
                 #if the user has manage_messages permission, skip checks
                 logging.info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to permissions.")
+                print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to permissions.")
                 continue
 
             #blacklist check
@@ -146,20 +177,26 @@ async def scan_worker():
 
             #already scanned (skip)
             if norm_url in last_scanned_urls:
+                logging.info(f"Skipping because already scanned: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
+                print(f"Already scanned: {norm_url}")
                 continue
 
             #whitelist check (skip)
             if any(whitelisted in norm_url for whitelisted in WHITELIST):
+                logging.info(f"Skipping whitelisted link: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
+                print(f"Skipping whitelisted link: {norm_url}")
                 continue
 
             #queue for vt
             await vt_queue.put((message, norm_url, is_attempting_bypass))
+            print(f"Queued for VirusTotal: {url}")
             last_scanned_urls.add(norm_url)
 
         except Exception as e:
             logging.error(f"Error in scan_worker: {e}")
         finally:
             scan_queue.task_done()
+            #print(f"Finished processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
 
 async def vt_worker():
     async with aiohttp.ClientSession() as session:
@@ -167,7 +204,6 @@ async def vt_worker():
             message, url, is_attempting_bypass = await vt_queue.get()
             norm_url = url.lower().strip()
 
-            #default to no deferred messages
             deferred_messages = []
 
             try:
@@ -277,8 +313,8 @@ async def on_message(message):
         return
 
     content = message.content.strip()
-    if client.user in message.mentions:
-        if message.author.id == SILLY_MODE_USER_ID:
+    if client.user in message.mentions and message.author.guild_permissions.manage_messages:
+        if SILLY_MODE == 1:
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
                 await message.channel.send("Yes ma'am!")
                 return
