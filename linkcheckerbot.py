@@ -114,6 +114,11 @@ async def scan_worker():
         norm_url = url.lower().strip()
 
         try:
+            if message.author.guild_permissions.manage_messages:
+                #if the user has manage_messages permission, skip checks
+                logging.info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to permissions.")
+                continue
+
             #blacklist check
             if any(blacklisted in norm_url for blacklisted in BLACKLIST):
                 await message.delete()
@@ -251,7 +256,7 @@ async def check_user_violations(user, message_channel):
             await log_channel.send(
                 f"**User {user.mention} flagged for possible spam!**\n"
                 f"{len(user_violations[user.id])} malicious messages in the past {VIOLATION_WINDOW.total_seconds() // 60:.0f} minutes.\n"
-                f"Manual moderation is recommended."
+                f"Manual intervention is recommended."
             )
         logging.info(f"User {user} exceeded malicious message threshold.")
 
