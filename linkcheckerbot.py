@@ -245,7 +245,7 @@ async def check_user_violations(user, message_channel):
     now = datetime.now(timezone.utc)
     user_violations[user.id].append(now)
 
-    # Keep only recent violations
+    #keep only recent violations
     user_violations[user.id] = [
         t for t in user_violations[user.id] if now - t <= VIOLATION_WINDOW
     ]
