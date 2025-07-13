@@ -1,4 +1,5 @@
-*.txt
+blacklist.txt
+whitelist.txt
 logs/
 *.toml
 *.json

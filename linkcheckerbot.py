@@ -142,7 +142,7 @@ async def scan_worker():
     while True:
         message, url, is_attempting_bypass = await scan_queue.get()
         norm_url = url.lower().strip()
-        print(f"Processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+        #print(f"Processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
 
         try:
             if message.author.guild_permissions.manage_messages:
@@ -196,7 +196,7 @@ async def scan_worker():
             logging.error(f"Error in scan_worker: {e}")
         finally:
             scan_queue.task_done()
-            print(f"Finished processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+            #print(f"Finished processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
 
 async def vt_worker():
     async with aiohttp.ClientSession() as session:
@@ -204,7 +204,6 @@ async def vt_worker():
             message, url, is_attempting_bypass = await vt_queue.get()
             norm_url = url.lower().strip()
 
-            #default to no deferred messages
             deferred_messages = []
 
             try:

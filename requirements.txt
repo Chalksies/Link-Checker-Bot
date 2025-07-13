@@ -1,0 +1,6 @@
+discord
+tomli
+aiohttp
+asyncio
+logging
+datetime
