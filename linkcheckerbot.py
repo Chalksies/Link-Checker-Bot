@@ -27,8 +27,8 @@ if not os.path.exists("config.toml"):
         violation_window_minutes = 2
 
         [structure]
-        whitelist_path = "whitelist.txt"
-        blacklist_path = "blacklist.txt"
+        whitelist_path = "whitelist.json"
+        blacklist_path = "blacklist.json"
         logging_path = "logs"
         """
     
