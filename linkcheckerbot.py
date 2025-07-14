@@ -58,7 +58,6 @@ VT_API_KEY = config["virustotal"]["api_key"]
 LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
 SILLY_MODE = int(config["bot"]["silly_mode"])
 SCAN_INTERVAL = config["virustotal"]["scan_interval_seconds"]
-RATE_LIMIT_PER_MINUTE = config["virustotal"]["rate_limit_per_minute"]
 MAX_MALICIOUS_MESSAGES = config["moderation"]["max_violations"]
 VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minutes"])
 
@@ -67,7 +66,7 @@ BLACKLIST_PATH = config["structure"]["blacklist_path"]
 LOGGING_PATH = config["structure"]["logging_path"]
 
 if not os.path.exists(WHITELIST_PATH):
-    print("Created default whitelist — review and modify if needed.")
+    print("Default whitelist created, review and modify if needed.")
 
 def load_json_list(path, key="domains", default=None):
     if not os.path.exists(path):
@@ -325,6 +324,7 @@ async def check_user_violations(user, message_channel):
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
+    logging.info(f"Bot started at {datetime.now(timezone.utc).isoformat()}")
     client.loop.create_task(scan_worker())
     client.loop.create_task(vt_worker())
 
@@ -363,6 +363,7 @@ async def on_message(message):
             WHITELIST.add(domain)
             save_json_list(WHITELIST_PATH, WHITELIST)
             await message.channel.send(f"Added `{domain}` to whitelist.")
+            logging.info(f"Added `{domain}` to whitelist by {message.author} ({message.author.id})")
             return
 
         elif content.startswith("lc!whitelist remove "):
@@ -371,6 +372,7 @@ async def on_message(message):
                 WHITELIST.remove(domain)
                 save_json_list(WHITELIST_PATH, WHITELIST)
                 await message.channel.send(f"Removed `{domain}` from whitelist.")
+                logging.info(f"Removed `{domain}` from whitelist by {message.author} ({message.author.id})")
             else:
                 await message.channel.send(f"`{domain}` is not in the whitelist.")
             return
@@ -391,6 +393,7 @@ async def on_message(message):
         elif content == "lc!reload whitelist" or content == "lc!whitelist reload":
             WHITELIST = load_json_list(WHITELIST_PATH)
             await message.channel.send("Whitelist reloaded from file.")
+            logging.info("Whitelist reloaded from file.")
             return
 
         elif content.startswith("lc!blacklist add "):
@@ -398,6 +401,7 @@ async def on_message(message):
             BLACKLIST.add(domain)
             save_json_list(BLACKLIST_PATH, BLACKLIST)
             await message.channel.send(f"Added `{domain}` to blacklist.")
+            logging.info(f"Added `{domain}` to blacklist by {message.author} ({message.author.id})")
             return
 
         elif content.startswith("lc!blacklist remove "):
@@ -406,6 +410,7 @@ async def on_message(message):
                 BLACKLIST.remove(domain)
                 save_json_list(BLACKLIST_PATH, BLACKLIST)
                 await message.channel.send(f"Removed `{domain}` from blacklist.")
+                logging.info(f"Removed `{domain}` from blacklist by {message.author} ({message.author.id})")
             else:
                 await message.channel.send(f"`{domain}` is not in the blacklist.")
             return
@@ -426,6 +431,7 @@ async def on_message(message):
         elif content == "lc!reload blacklist"  or content == "lc!blacklist reload":
             BLACKLIST = load_json_list(BLACKLIST_PATH)
             await message.channel.send("Blacklist reloaded from file.")
+            logging.info("Blacklist reloaded from file.")
             return
 
         elif content == "lc!help":
