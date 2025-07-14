@@ -147,8 +147,8 @@ async def scan_worker():
         try:
             if message.author.guild_permissions.manage_messages:
                 #if the user has manage_messages permission, skip checks
-                logging.info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to permissions.")
-                print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to permissions.")
+                logging.info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
+                print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 continue
 
             #blacklist check
@@ -159,18 +159,20 @@ async def scan_worker():
                 log_channel = client.get_channel(LOG_CHANNEL_ID)
                 if log_channel:
                     await log_channel.send(
-                        f"`{url}` was removed due to being blacklisted.\n"
+                        f" A message containing \"`{url}`\" was removed due to being blacklisted.\n"
                         f" Message author: {message.author.mention} ({message.author.id})\n"
+                        f" Channel: {message.channel.mention}\n"
                         f" Timestamp: {datetime.now(timezone.utc).isoformat()}"
                     )
                 if is_attempting_bypass:
                     await message.channel.send(
-                        f"{message.author.mention}, you attempted to bypass the link checker logic via disguising it as a command. This incident will be reported."
+                        f"{message.author.mention}, you attempted to bypass the link checker logic by disguising it as a command. This incident will be reported."
                     )
                     if log_channel:
                         await log_channel.send(
-                            f"User {message.author.mention} ({message.author.id}) attempted to bypass the link checker via disguising it as a command.\n"
-                            f"Link: `{url}`\n"
+                            f"User {message.author.mention} ({message.author.id}) attempted to **bypass** the link checker by disguising it as a command!\n"
+                            f"Blocked Link: `{url}` (Blacklist)\n"
+                            f"Channel: {message.channel.mention}\n"
                             f"Timestamp: {datetime.now(timezone.utc).isoformat()}"
                         )
                 continue
@@ -189,11 +191,11 @@ async def scan_worker():
 
             #queue for vt
             await vt_queue.put((message, norm_url, is_attempting_bypass))
-            print(f"Queued for VirusTotal: {url}")
+            print(f"{datetime.now(timezone.utc).isoformat()} - Queued for VT: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
             last_scanned_urls.add(norm_url)
 
         except Exception as e:
-            logging.error(f"Error in scan_worker: {e}")
+            logging.error(f"[Scan Worker Error] Failed to process {url}: {e}")
         finally:
             scan_queue.task_done()
             #print(f"Finished processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
@@ -221,12 +223,32 @@ async def vt_worker():
                     BLACKLIST.add(norm_url)
                     save_blacklist()
 
-                    #delete original
                     try:
-                        await message.delete()
+                        await message.delete
                         await check_user_violations(message.author, message.channel)
+                    except discord.Forbidden:
+                        logging.warning(f"Failed to delete message from {message.author} ({message.author.id}) in #{message.channel} due to missing permissions.")
                         await message.channel.send(
-                            f"Malicious link from {message.author.mention} removed.\n"
+                            f"I tried to delete a message with a malicious link, but I don't have permissions!"
+                        )
+                        continue
+
+                    if is_attempting_bypass:
+                        await message.channel.send(
+                            f"{message.author.mention}, you attempted to bypass the link checker logic by disguising it as a command. This incident will be reported."
+                        )
+                        if log_channel:
+                            await log_channel.send(
+                                f"User {message.author.mention} ({message.author.id}) attempted to **bypass** the link checker by disguising it as a command!\n"
+                                f"Blocked Link: `{url}` (Malicious)\n"
+                                f"Channel: {message.channel.mention}\n"
+                                f"Timestamp: {datetime.now(timezone.utc).isoformat()}"
+                            )
+                        continue
+
+                    else:
+                        await message.channel.send(
+                            f"Malicious link from {message.author.mention} was removed.\n"
                             f"({detections} detections on VirusTotal)"
                         )
                         logging.info(f"[MALICIOUS] Deleted: {url} from {message.author} ({message.author.id})")
@@ -237,10 +259,6 @@ async def vt_worker():
                                 f"Sender: {message.author.mention} ({message.author.id})\n"
                                 f"Time: `{datetime.now(timezone.utc).isoformat()}`"
                             )
-
-                    except Exception as e:
-                        logging.warning(f"Failed to delete original malicious message: {e}")
-
 
                     #delete all deferred copies
                     delete_count = 0
