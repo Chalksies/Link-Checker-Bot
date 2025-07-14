@@ -50,9 +50,6 @@ if not os.path.exists("config.toml"):
     print("Default config.toml created. Please edit it with your settings and restart the bot.")
     exit(1)
 
-if not os.path.exists("whitelist.json"):
-    print("Created default whitelist.json — review and modify if needed.")
-
 config = tomli.load(open("config.toml", "rb"))
 
 DISCORD_TOKEN = config["bot"]["discord_token"]
@@ -68,6 +65,9 @@ VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minu
 WHITELIST_PATH = config["structure"]["whitelist_path"]
 BLACKLIST_PATH = config["structure"]["blacklist_path"]
 LOGGING_PATH = config["structure"]["logging_path"]
+
+if not os.path.exists(WHITELIST_PATH):
+    print("Created default whitelist — review and modify if needed.")
 
 def load_json_list(path, key="domains", default=None):
     if not os.path.exists(path):
