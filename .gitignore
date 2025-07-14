@@ -1,5 +1,6 @@
 blacklist.txt
 whitelist.txt
+listmigrator.py
 logs/
 *.toml
 *.json

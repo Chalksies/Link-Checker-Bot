@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import tomli
+import json
 
 if not os.path.exists("config.toml"):
     DEFAULT_CONFIG = """
@@ -52,38 +53,22 @@ WHITELIST_PATH = config["structure"]["whitelist_path"]
 BLACKLIST_PATH = config["structure"]["blacklist_path"]
 LOGGING_PATH = config["structure"]["logging_path"]
 
-WHITELIST = set()
+def load_json_list(path, key="domains"):
+    if not os.path.exists(path):
+        with open(path, "w") as f:
+            json.dump({key: []}, f, indent=4)
+        print(f"🛠 Created empty {path}")
+        return set()
+    with open(path, "r") as f:
+        data = json.load(f)
+        return set(map(str.lower, data.get(key, [])))
+    
+def save_json_list(path, domain_set, key="domains"):
+    with open(path, "w") as f:
+        json.dump({key: sorted(domain_set)}, f, indent=4)
 
-def load_whitelist():
-    global WHITELIST
-    try:
-        with open(WHITELIST_PATH) as f:
-            WHITELIST = set(line.strip().lower() for line in f if line.strip())
-    except FileNotFoundError:
-        WHITELIST = set()
-
-def save_whitelist():
-    with open(WHITELIST_PATH, "w") as f:
-        f.write("\n".join(sorted(WHITELIST)))
-
-
-BLACKLIST = set()
-
-def load_blacklist():
-    global BLACKLIST
-    try:
-        with open(BLACKLIST_PATH) as f:
-            BLACKLIST = set(line.strip().lower() for line in f if line.strip())
-    except FileNotFoundError:
-        BLACKLIST = set()
-
-def save_blacklist():
-    with open(BLACKLIST_PATH, "w") as f:
-        f.write("\n".join(sorted(BLACKLIST)))
-
-#call these once on startup
-load_whitelist()
-load_blacklist()
+WHITELIST = load_json_list(WHITELIST_PATH)
+BLACKLIST = load_json_list(BLACKLIST_PATH)
 
 #link regex
 URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
@@ -221,7 +206,7 @@ async def vt_worker():
                     log_channel = client.get_channel(LOG_CHANNEL_ID)
                     #blacklist and save
                     BLACKLIST.add(norm_url)
-                    save_blacklist()
+                    save_json_list(BLACKLIST_PATH, BLACKLIST)
 
                     try:
                         await message.delete
@@ -339,6 +324,7 @@ async def on_message(message):
 
     #handle commands
     if content.startswith("lc!"):
+        global BLACKLIST, WHITELIST
         #check permission
         if not message.author.guild_permissions.manage_messages:
             await message.channel.send("You don't have permission to configure the bot.")
@@ -357,7 +343,7 @@ async def on_message(message):
         if content.startswith("lc!whitelist add "):
             domain = content[len("lc!whitelist add "):].strip().lower()
             WHITELIST.add(domain)
-            save_whitelist()
+            save_json_list(WHITELIST_PATH, WHITELIST)
             await message.channel.send(f"Added `{domain}` to whitelist.")
             return
 
@@ -365,7 +351,7 @@ async def on_message(message):
             domain = content[len("lc!whitelist remove "):].strip().lower()
             if domain in WHITELIST:
                 WHITELIST.remove(domain)
-                save_whitelist()
+                save_json_list(WHITELIST_PATH, WHITELIST)
                 await message.channel.send(f"Removed `{domain}` from whitelist.")
             else:
                 await message.channel.send(f"`{domain}` is not in the whitelist.")
@@ -375,20 +361,24 @@ async def on_message(message):
             if not WHITELIST:
                 await message.channel.send("Whitelist is empty.")
             else:
-                await message.channel.send(
-                    "**Whitelisted Domains:**\n" + "\n".join(f"- `{d}`" for d in sorted(WHITELIST))
-                )
+                domains = sorted(WHITELIST)
+                chunks = [domains[i:i+20] for i in range(0, len(domains), 30)]  # avoid message length errors
+                for i, chunk in enumerate(chunks):
+                    await message.channel.send(
+                        f"**Whitelisted Domains** (page {i+1}/{len(chunks)}):\n" +
+                        "\n".join(f"- `{domain}`" for domain in chunk)
+                    )
             return
 
         elif content == "lc!reload whitelist" or content == "lc!whitelist reload":
-            load_whitelist()
+            WHITELIST = load_json_list(WHITELIST_PATH)
             await message.channel.send("Whitelist reloaded from file.")
             return
 
         elif content.startswith("lc!blacklist add "):
             domain = content[len("lc!blacklist add "):].strip().lower()
             BLACKLIST.add(domain)
-            save_blacklist()
+            save_json_list(BLACKLIST_PATH, BLACKLIST)
             await message.channel.send(f"Added `{domain}` to blacklist.")
             return
 
@@ -396,7 +386,7 @@ async def on_message(message):
             domain = content[len("lc!blacklist remove "):].strip().lower()
             if domain in BLACKLIST:
                 BLACKLIST.remove(domain)
-                save_blacklist()
+                save_json_list(BLACKLIST_PATH, BLACKLIST)
                 await message.channel.send(f"Removed `{domain}` from blacklist.")
             else:
                 await message.channel.send(f"`{domain}` is not in the blacklist.")
@@ -406,13 +396,17 @@ async def on_message(message):
             if not BLACKLIST:
                 await message.channel.send("Blacklist is empty.")
             else:
-                await message.channel.send(
-                    "**Blacklisted Domains:**\n" + "\n".join(f"- `{d}`" for d in sorted(BLACKLIST))
-                )
+                domains = sorted(BLACKLIST)
+                chunks = [domains[i:i+20] for i in range(0, len(domains), 30)]
+                for i, chunk in enumerate(chunks):
+                    await message.channel.send(
+                        f"**Blacklisted Domains** (page {i+1}/{len(chunks)}):\n" +
+                        "\n".join(f"- `{domain}`" for domain in chunk)
+                    )
             return
 
         elif content == "lc!reload blacklist"  or content == "lc!blacklist reload":
-            load_blacklist()
+            BLACKLIST = load_json_list(BLACKLIST_PATH)
             await message.channel.send("Blacklist reloaded from file.")
             return
 
