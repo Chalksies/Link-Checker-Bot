@@ -10,8 +10,20 @@ from collections import defaultdict
 import tomli
 import json
 
-if not os.path.exists("config.toml"):
-    DEFAULT_CONFIG = """
+DEFAULT_WHITELIST = {
+    "domains": [
+        "discord.com",
+        "discordapp.com",
+        "youtube.com",
+        "youtu.be",
+        "google.com",
+        "github.com",
+        "tenor.com",
+        "wikipedia.org"
+    ]
+}
+
+DEFAULT_CONFIG = """
         [bot]
         discord_token = "YOUR_DISCORD_TOKEN"
         silly_mode = 0
@@ -31,11 +43,15 @@ if not os.path.exists("config.toml"):
         blacklist_path = "blacklist.json"
         logging_path = "logs"
         """
-    
+
+if not os.path.exists("config.toml"):
     with open("config.toml", "w") as f:
         f.write(DEFAULT_CONFIG)
     print("Default config.toml created. Please edit it with your settings and restart the bot.")
     exit(1)
+
+if not os.path.exists("whitelist.json"):
+    print("Created default whitelist.json — review and modify if needed.")
 
 config = tomli.load(open("config.toml", "rb"))
 
@@ -53,12 +69,14 @@ WHITELIST_PATH = config["structure"]["whitelist_path"]
 BLACKLIST_PATH = config["structure"]["blacklist_path"]
 LOGGING_PATH = config["structure"]["logging_path"]
 
-def load_json_list(path, key="domains"):
+def load_json_list(path, key="domains", default=None):
     if not os.path.exists(path):
+        if default is None:
+            default = {key: []}
         with open(path, "w") as f:
-            json.dump({key: []}, f, indent=4)
-        print(f"🛠 Created empty {path}")
-        return set()
+            json.dump(default, f, indent=4)
+        print(f"Created default {path}")
+        return set(default[key])
     with open(path, "r") as f:
         data = json.load(f)
         return set(map(str.lower, data.get(key, [])))
@@ -67,8 +85,8 @@ def save_json_list(path, domain_set, key="domains"):
     with open(path, "w") as f:
         json.dump({key: sorted(domain_set)}, f, indent=4)
 
-WHITELIST = load_json_list(WHITELIST_PATH)
-BLACKLIST = load_json_list(BLACKLIST_PATH)
+WHITELIST = load_json_list("whitelist.json", default=DEFAULT_WHITELIST)
+BLACKLIST = load_json_list("blacklist.json", default={"domains": []})
 
 #link regex
 URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
