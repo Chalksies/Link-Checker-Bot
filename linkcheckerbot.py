@@ -141,26 +141,26 @@ async def virustotal_lookup(session, url):
     async with session.get(report_url, headers=headers) as resp:
         if resp.status != 200:
             print(f"Report fetch failed for {url}: HTTP {resp.status}")
-            log_channel = client.get_channel(LOG_CHANNEL_ID)
-            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-            if log_channel and responsible_mod:
-                await log_channel.send(
-                    f"{responsible_mod.mention}, I failed to scan a link!\n"
-                    f"(Report fetch failed for `{url}`: HTTP {resp.status})"
-                )
+            #log_channel = client.get_channel(LOG_CHANNEL_ID)
+            #responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            #if log_channel and responsible_mod:
+            #    await log_channel.send(
+            #        f"{responsible_mod.mention}, I failed to scan a link!\n"
+            #        f"(Report fetch failed for `{url}`: HTTP {resp.status})"
+            #    )
 
             raise Exception(f"Report fetch failed for {url}: HTTP {resp.status}")
         report = await resp.json()
 
     if "data" not in report or "attributes" not in report["data"]:
         print(f"Malformed response for {url}: {report}")
-        log_channel = client.get_channel(LOG_CHANNEL_ID)
-        responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-        if log_channel and responsible_mod:
-            await log_channel.send(
-                f"{responsible_mod.mention}, I failed to scan a link!\n"
-                f"(Malformed response for `{url}`: {report})"
-            )
+        #log_channel = client.get_channel(LOG_CHANNEL_ID)
+        #responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+        #if log_channel and responsible_mod:
+        #    await log_channel.send(
+        #        f"{responsible_mod.mention}, I failed to scan a link!\n"
+        #        f"(Malformed response for `{url}`: {report})"
+        #    )
         raise Exception(f"Malformed response for {url}: {report}")
 
     return report
@@ -312,13 +312,13 @@ async def vt_worker():
             except Exception as e:
                 logging.error(f"[VT Worker Error] Failed to scan {url}: {e}")
                 print(f"Error scanning {url}: {e}")
-                log_channel = client.get_channel(LOG_CHANNEL_ID)
-                responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-                if log_channel and responsible_mod:
-                    await log_channel.send(
-                        f"{responsible_mod.mention}, I failed to scan a link!\n"
-                        f"[VT Worker Error] Error scanning `{url}`: {e})"
-                    )
+                #log_channel = client.get_channel(LOG_CHANNEL_ID)
+                #responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                #if log_channel and responsible_mod:
+                    #await log_channel.send(
+                    #    f"{responsible_mod.mention}, I failed to scan a link!\n"
+                    #    f"[VT Worker Error] Error scanning `{url}`: {e})"
+                    #)
                 #still pop on error to avoid locking queue
                 scans_in_progress.pop(norm_url, None)
 
