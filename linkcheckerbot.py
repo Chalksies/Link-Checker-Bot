@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import tomli
 import json
+import tldextract
 
 DEFAULT_WHITELIST = {
     "domains": [
@@ -124,6 +125,33 @@ def vt_url_id(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
     return encoded
 
+def extract_domain(url: str) -> str:
+    ext = tldextract.extract(url)
+    return f"{ext.domain}.{ext.suffix}" if ext.suffix else ext.domain
+
+def extract_all_urls(message) -> set:
+    urls = set(re.findall(URL_REGEX, message.content or ""))
+
+    for embed in message.embeds:
+        if embed.url:
+            urls.add(embed.url)
+        if embed.title:
+            urls.update(re.findall(URL_REGEX, embed.title))
+        if embed.description:
+            urls.update(re.findall(URL_REGEX, embed.description))
+        if embed.footer and embed.footer.text:
+            urls.update(re.findall(URL_REGEX, embed.footer.text))
+        if embed.author and embed.author.name:
+            urls.update(re.findall(URL_REGEX, embed.author.name))
+        for field in embed.fields:
+            if field.name:
+                urls.update(re.findall(URL_REGEX, field.name))
+            if field.value:
+                urls.update(re.findall(URL_REGEX, field.value))
+    
+    #normalize and return
+    return {url.lower().strip() for url in urls}
+
 #virustotal api interaction
 async def virustotal_lookup(session, url):
     scan_url = "https://www.virustotal.com/api/v3/urls"
@@ -177,8 +205,7 @@ async def virustotal_lookup(session, url):
 #worker to process the scan queue
 async def scan_worker():
     while True:
-        message, url, is_attempting_bypass = await scan_queue.get()
-        norm_url = url.lower().strip()
+        message, url = await scan_queue.get()
         #print(f"Processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
 
         try:
@@ -188,10 +215,12 @@ async def scan_worker():
                 print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 continue
 
+            domain = extract_domain(url)
+
             #blacklist check
-            if any(blacklisted in norm_url for blacklisted in BLACKLIST):
+            if domain in BLACKLIST:
                 await message.delete()
-                logging.info(f"[BLACKLIST] Deleted message with blacklisted link: {norm_url} from {message.author} ({message.author.id})")
+                logging.info(f"[BLACKLIST] Deleted message with blacklisted link: {url} from {message.author} ({message.author.id})")
                 await message.channel.send("A blacklisted link was removed.")
                 log_channel = client.get_channel(LOG_CHANNEL_ID)
                 if log_channel:
@@ -201,29 +230,17 @@ async def scan_worker():
                         f" Channel: {message.channel.mention}\n"
                         f" Timestamp: {datetime.now(timezone.utc).isoformat()}"
                     )
-                if is_attempting_bypass:
-                    await message.channel.send(
-                        f"{message.author.mention}, you attempted to bypass the link checker logic by disguising it as a command. This incident will be reported."
-                    )
-                    if log_channel:
-                        await log_channel.send(
-                            f"User {message.author.mention} ({message.author.id}) attempted to **bypass** the link checker by disguising it as a command!\n"
-                            f"Blocked Link: `{url}` (Blacklist)\n"
-                            f"Channel: {message.channel.mention}\n"
-                            f"Timestamp: {datetime.now(timezone.utc).isoformat()}"
-                        )
-                continue
 
             #whitelist check (skip)
-            if any(whitelisted in norm_url for whitelisted in WHITELIST):
-                logging.info(f"Skipping whitelisted link: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
-                print(f"Skipping whitelisted link: {norm_url}")
+            if domain in WHITELIST:
+                logging.info(f"Skipping whitelisted link: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+                print(f"Skipping whitelisted link: {url}")
                 continue
 
             #queue for vt
-            await vt_queue.put((message, norm_url, is_attempting_bypass))
-            print(f"{datetime.now(timezone.utc).isoformat()} - Queued for VT: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
-            last_scanned_urls.add(norm_url)
+            await vt_queue.put((message, url))
+            print(f"{datetime.now(timezone.utc).isoformat()} - Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+            last_scanned_urls.add(url)
 
         except Exception as e:
             logging.error(f"[Scan Worker Error] Failed to process {url}: {e}")
@@ -234,8 +251,7 @@ async def scan_worker():
 async def vt_worker():
     async with aiohttp.ClientSession() as session:
         while True:
-            message, url, is_attempting_bypass = await vt_queue.get()
-            norm_url = url.lower().strip()
+            message, url = await vt_queue.get()
 
             deferred_messages = []
 
@@ -246,12 +262,16 @@ async def vt_worker():
                 detections = stats.get("malicious", 0)
 
                 #always clean up the currently being scanned queue
-                deferred_messages = scans_in_progress.pop(norm_url, [])
+                deferred_messages = scans_in_progress.pop(url, [])
 
                 if detections > 0:
                     log_channel = client.get_channel(LOG_CHANNEL_ID)
                     #blacklist and save
-                    BLACKLIST.add(norm_url)
+                    domain = extract_domain(url)
+                    if domain not in BLACKLIST:
+                        BLACKLIST.add(domain)
+                        logging.info(f"Adding {domain} to blacklist due to malicious link: {url}")
+                        print(f"Adding {domain} to blacklist due to malicious link: {url}")
                     save_json_list(BLACKLIST_PATH, BLACKLIST)
 
                     try:
@@ -262,19 +282,6 @@ async def vt_worker():
                         await message.channel.send(
                             f"I tried to delete a message with a malicious link, but I don't have permissions!"
                         )
-                        continue
-
-                    if is_attempting_bypass:
-                        await message.channel.send(
-                            f"{message.author.mention}, you attempted to bypass the link checker logic by disguising it as a command. This incident will be reported."
-                        )
-                        if log_channel:
-                            await log_channel.send(
-                                f"User {message.author.mention} ({message.author.id}) attempted to **bypass** the link checker by disguising it as a command!\n"
-                                f"Blocked Link: `{url}` (Malicious)\n"
-                                f"Channel: {message.channel.mention}\n"
-                                f"Timestamp: {datetime.now(timezone.utc).isoformat()}"
-                            )
                         continue
 
                     else:
@@ -329,7 +336,7 @@ async def vt_worker():
                     #    f"[VT Worker Error] Error scanning `{url}`: {e})"
                     #)
                 #still pop on error to avoid locking queue
-                scans_in_progress.pop(norm_url, None)
+                scans_in_progress.pop(url, None)
 
             finally:
                 await asyncio.sleep(SCAN_INTERVAL)
@@ -353,6 +360,8 @@ async def check_user_violations(user, message_channel):
                 f"Manual intervention is recommended."
             )
         logging.info(f"User {user} exceeded malicious message threshold.")
+
+
 
 
 
@@ -491,11 +500,28 @@ async def on_message(message):
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
                 await message.channel.send("Yes ma'am!")
                 return
-
-    urls = re.findall(URL_REGEX, message.content)
+            if message.content == f"<@{client.user.id}>, become self aware":
+                await message.channel.send("No")
+                return
+            
+    urls = message.extract_all_urls()
+    if not urls:
+        return
+    
     for url in urls:
-        norm_url = url.lower().strip()
-        is_attempting_bypass = False
-        await scan_queue.put((message, norm_url, is_attempting_bypass))
+        await scan_queue.put((message, url))
+
+@client.event
+async def on_message_edit(before, after):
+    if after.author.bot:
+        return
+    before_urls = extract_all_urls(before)
+    after_urls = extract_all_urls(after)
+
+    new_urls = after_urls - before_urls
+
+    for url in new_urls:
+        await scan_queue.put((after, url))
+
 
 client.run(DISCORD_TOKEN)

@@ -4,3 +4,4 @@ aiohttp
 asyncio
 logging
 datetime
+tldextract
