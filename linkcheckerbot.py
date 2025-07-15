@@ -111,7 +111,14 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 user_violations = defaultdict(list)  # track user violations
+
 tree = app_commands.CommandTree(client)
+
+whitelist_group = app_commands.Group(name="whitelist", description="Manage the whitelist")
+blacklist_group = app_commands.Group(name="blacklist", description="Manage the blacklist")
+
+tree.add_command(whitelist_group)
+tree.add_command(blacklist_group)
 
 def vt_url_id(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
@@ -359,7 +366,7 @@ async def on_ready():
     client.loop.create_task(scan_worker())
     client.loop.create_task(vt_worker())
 
-@tree.command(name="whitelist_add", description="Add a domain to the whitelist")
+@whitelist_group.command(name="add", description="Add a domain to the whitelist")
 @app_commands.describe(domain="The domain to whitelist (e.g. example.com)")
 async def whitelist_add(interaction: discord.Interaction, domain: str):
     if not interaction.user.guild_permissions.manage_messages:
@@ -371,7 +378,7 @@ async def whitelist_add(interaction: discord.Interaction, domain: str):
     save_json_list(WHITELIST_PATH, WHITELIST)
     await interaction.response.send_message(f"Added `{domain}` to whitelist.")
 
-@tree.command(name="whitelist_remove", description="Remove a domain from the whitelist")
+@whitelist_group.command(name="remove", description="Remove a domain from the whitelist")
 @app_commands.describe(domain="The domain to remove from the whitelist")
 async def whitelist_remove(interaction: discord.Interaction, domain: str):
     if not interaction.user.guild_permissions.manage_messages:
@@ -386,7 +393,7 @@ async def whitelist_remove(interaction: discord.Interaction, domain: str):
     else:
         await interaction.response.send_message(f"`{domain}` is not in the whitelist.", ephemeral=True)
 
-@tree.command(name="whitelist_show", description="Show the current whitelist")
+@whitelist_group.command(name="show", description="Show the current whitelist")
 async def whitelist_show(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
@@ -405,7 +412,7 @@ async def whitelist_show(interaction: discord.Interaction):
             )
         await interaction.response.send_message("\n".join(response))
 
-@tree.command(name="whitelist_reload", description="Reload the whitelist from file")
+@whitelist_group.command(name="reload", description="Reload the whitelist from file")
 async def whitelist_reload(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
@@ -415,7 +422,7 @@ async def whitelist_reload(interaction: discord.Interaction):
     WHITELIST = load_json_list(WHITELIST_PATH)
     await interaction.response.send_message("Whitelist reloaded from file.")
 
-@tree.command(name="blacklist_add", description="Add a domain to the blacklist")
+@blacklist_group.command(name="add", description="Add a domain to the blacklist")
 @app_commands.describe(domain="The domain to blacklist (e.g. example.com)")
 async def blacklist_add(interaction: discord.Interaction, domain: str):
     if not interaction.user.guild_permissions.manage_messages:
@@ -427,7 +434,7 @@ async def blacklist_add(interaction: discord.Interaction, domain: str):
     save_json_list(BLACKLIST_PATH, BLACKLIST)
     await interaction.response.send_message(f"Added `{domain}` to blacklist.")  
 
-@tree.command(name="blacklist_remove", description="Remove a domain from the blacklist")
+@blacklist_group.command(name="remove", description="Remove a domain from the blacklist")
 @app_commands.describe(domain="The domain to remove from the blacklist")
 async def blacklist_remove(interaction: discord.Interaction, domain: str):  
     if not interaction.user.guild_permissions.manage_messages:
@@ -442,7 +449,7 @@ async def blacklist_remove(interaction: discord.Interaction, domain: str):
     else:
         await interaction.response.send_message(f"`{domain}` is not in the blacklist.", ephemeral=True)
 
-@tree.command(name="blacklist_show", description="Show the current blacklist")
+@blacklist_group.command(name="show", description="Show the current blacklist")
 async def blacklist_show(interaction: discord.Interaction): 
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
@@ -461,7 +468,7 @@ async def blacklist_show(interaction: discord.Interaction):
             )
         await interaction.response.send_message("\n".join(response))
 
-@tree.command(name="blacklist_reload", description="Reload the blacklist from file")
+@blacklist_group.command(name="reload", description="Reload the blacklist from file")
 async def blacklist_reload(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
