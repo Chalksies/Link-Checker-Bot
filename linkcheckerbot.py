@@ -27,11 +27,11 @@ DEFAULT_CONFIG = """
         [bot]
         discord_token = "YOUR_DISCORD_TOKEN"
         silly_mode = 0
+        resposible_moderator_id =             #optional, user ID of the responsible moderator for the bot
 
         [virustotal]
         api_key = "YOUR_VIRUSTOTAL_API_KEY"
         scan_interval_seconds = 10
-        rate_limit_per_minute = 4
 
         [moderation]
         log_channel_id = 0
@@ -54,6 +54,7 @@ config = tomli.load(open("config.toml", "rb"))
 
 DISCORD_TOKEN = config["bot"]["discord_token"]
 VT_API_KEY = config["virustotal"]["api_key"]
+RESPONSIBLE_MODERATOR_ID = config["bot"]["responsible_moderator_id"]
 
 LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
 SILLY_MODE = int(config["bot"]["silly_mode"])
@@ -115,27 +116,52 @@ def vt_url_id(url: str) -> str:
     return encoded
 
 #virustotal api interaction
-async def virus_total_lookup(session, url):
+async def virustotal_lookup(session, url):
     scan_url = "https://www.virustotal.com/api/v3/urls"
     headers = { "x-apikey": VT_API_KEY }
 
     #submit url for scanning
     async with session.post(scan_url, headers=headers, data={"url": url}) as resp:
         if resp.status != 200:
-            raise Exception(f"URL submission failed: HTTP {resp.status}")
-        submission = await resp.json()
+            print(f"URL submission failed for {url}: HTTP {resp.status}")
+            log_channel = client.get_channel(LOG_CHANNEL_ID)
+            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            if log_channel and responsible_mod:
+                await log_channel.send(
+                    f"{responsible_mod.mention}, I failed to scan a link!\n"
+                    f"(URL submission failed for `{url}`: HTTP {resp.status})"
+                )
 
-    await asyncio.sleep(10)  #wait before requesting report
+            raise Exception(f"URL submission failed for {url}: HTTP {resp.status}")
+
+    await asyncio.sleep(SCAN_INTERVAL)  #wait before requesting report
 
     #fetch report using base64url-encoded url
     report_url = f"{scan_url}/{vt_url_id(url)}"
     async with session.get(report_url, headers=headers) as resp:
         if resp.status != 200:
-            raise Exception(f"Report fetch failed: HTTP {resp.status}")
+            print(f"Report fetch failed for {url}: HTTP {resp.status}")
+            log_channel = client.get_channel(LOG_CHANNEL_ID)
+            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            if log_channel and responsible_mod:
+                await log_channel.send(
+                    f"{responsible_mod.mention}, I failed to scan a link!\n"
+                    f"(Report fetch failed for `{url}`: HTTP {resp.status})"
+                )
+
+            raise Exception(f"Report fetch failed for {url}: HTTP {resp.status}")
         report = await resp.json()
 
     if "data" not in report or "attributes" not in report["data"]:
-        raise Exception(f"Malformed response: {report}")
+        print(f"Malformed response for {url}: {report}")
+        log_channel = client.get_channel(LOG_CHANNEL_ID)
+        responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+        if log_channel and responsible_mod:
+            await log_channel.send(
+                f"{responsible_mod.mention}, I failed to scan a link!\n"
+                f"(Malformed response for `{url}`: {report})"
+            )
+        raise Exception(f"Malformed response for {url}: {report}")
 
     return report
 
@@ -179,12 +205,6 @@ async def scan_worker():
                         )
                 continue
 
-            #already scanned (skip)
-            if norm_url in last_scanned_urls:
-                logging.info(f"Skipping because already scanned: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
-                print(f"Already scanned: {norm_url}")
-                continue
-
             #whitelist check (skip)
             if any(whitelisted in norm_url for whitelisted in WHITELIST):
                 logging.info(f"Skipping whitelisted link: {norm_url} from {message.author} ({message.author.id}) in #{message.channel}")
@@ -211,8 +231,8 @@ async def vt_worker():
             deferred_messages = []
 
             try:
-                #virusTotal Scan
-                report = await virus_total_lookup(session, url)
+                #virustotal scan
+                report = await virustotal_lookup(session, url)
                 stats = report["data"]["attributes"]["last_analysis_stats"]
                 detections = stats.get("malicious", 0)
 
