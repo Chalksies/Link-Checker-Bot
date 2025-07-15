@@ -13,17 +13,9 @@ Setting up:
 - Run `pip install -r requirements.txt` inside the folder, preferably in a venv
 - Run the script once and follow instructions
 - Set up a whitelist.json and a blacklist.json
-- Run the python script. The bot will scan each message, immediately delete it if it's on the blacklist, don't touch it if it's on the whitelist, and scan it via VirusTotal if it's on neither of those. If the message contains a malicious link, it will be removed.  
+- Run the python script.
 ----------------------------------------
-Commands:
-- "lc!whitelist add \<domain>    - Add domain to whitelist"  
-- "lc!whitelist remove \<domain> - Remove domain from whitelist"  
-- "lc!whitelist show            - Show whitelisted domains"  
-- "lc!reload whitelist          - Reload whitelist from file"  
-- "lc!blacklist add \<domain>    - Add domain to blacklist"  
-- "lc!blacklist remove \<domain> - Remove domain from blacklist"  
-- "lc!blacklist show            - Show blacklisted domains"  
-- "lc!reload blacklist          - Reload blacklist from file"  
-- "lc!help                      - Show help message"  
+Usage:
+The bot is fully automatic. You can manipulate the whitelist and blacklist through slash commands.
 ----------------------------------------
 Made for r/traaaaaaannnnnnnnnns2 official Discord server by Chalk.
