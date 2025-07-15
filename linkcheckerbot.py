@@ -504,7 +504,7 @@ async def on_message(message):
                 await message.channel.send("No")
                 return
             
-    urls = message.extract_all_urls()
+    urls = extract_all_urls(message)
     if not urls:
         return
     
