@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 import re
 import aiohttp
 import asyncio
@@ -110,6 +111,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 user_violations = defaultdict(list)  # track user violations
+tree = app_commands.CommandTree(client)
 
 def vt_url_id(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
@@ -351,10 +353,125 @@ async def check_user_violations(user, message_channel):
 #----------------------- bot stuff -----------------------
 @client.event
 async def on_ready():
+    await tree.sync()
     print(f"Logged in as {client.user}")
     logging.info(f"Bot started at {datetime.now(timezone.utc).isoformat()}")
     client.loop.create_task(scan_worker())
     client.loop.create_task(vt_worker())
+
+@tree.command(name="whitelist_add", description="Add a domain to the whitelist")
+@app_commands.describe(domain="The domain to whitelist (e.g. example.com)")
+async def whitelist_add(interaction: discord.Interaction, domain: str):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    domain = domain.lower().strip()
+    WHITELIST.add(domain)
+    save_json_list(WHITELIST_PATH, WHITELIST)
+    await interaction.response.send_message(f"Added `{domain}` to whitelist.")
+
+@tree.command(name="whitelist_remove", description="Remove a domain from the whitelist")
+@app_commands.describe(domain="The domain to remove from the whitelist")
+async def whitelist_remove(interaction: discord.Interaction, domain: str):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    domain = domain.lower().strip()
+    if domain in WHITELIST:
+        WHITELIST.remove(domain)
+        save_json_list(WHITELIST_PATH, WHITELIST)
+        await interaction.response.send_message(f"Removed `{domain}` from whitelist.")
+    else:
+        await interaction.response.send_message(f"`{domain}` is not in the whitelist.", ephemeral=True)
+
+@tree.command(name="whitelist_show", description="Show the current whitelist")
+async def whitelist_show(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    if not WHITELIST:
+        await interaction.response.send_message("Whitelist is empty.")
+    else:
+        domains = sorted(WHITELIST)
+        chunks = [domains[i:i+20] for i in range(0, len(domains), 30)]
+        response = []
+        for i, chunk in enumerate(chunks):
+            response.append(
+                f"**Whitelisted Domains** (page {i+1}/{len(chunks)}):\n" +
+                "\n".join(f"- `{domain}`" for domain in chunk)
+            )
+        await interaction.response.send_message("\n".join(response))
+
+@tree.command(name="whitelist_reload", description="Reload the whitelist from file")
+async def whitelist_reload(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    global WHITELIST
+    WHITELIST = load_json_list(WHITELIST_PATH)
+    await interaction.response.send_message("Whitelist reloaded from file.")
+
+@tree.command(name="blacklist_add", description="Add a domain to the blacklist")
+@app_commands.describe(domain="The domain to blacklist (e.g. example.com)")
+async def blacklist_add(interaction: discord.Interaction, domain: str):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    domain = domain.lower().strip()
+    BLACKLIST.add(domain)
+    save_json_list(BLACKLIST_PATH, BLACKLIST)
+    await interaction.response.send_message(f"Added `{domain}` to blacklist.")  
+
+@tree.command(name="blacklist_remove", description="Remove a domain from the blacklist")
+@app_commands.describe(domain="The domain to remove from the blacklist")
+async def blacklist_remove(interaction: discord.Interaction, domain: str):  
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    domain = domain.lower().strip()
+    if domain in BLACKLIST:
+        BLACKLIST.remove(domain)
+        save_json_list(BLACKLIST_PATH, BLACKLIST)
+        await interaction.response.send_message(f"Removed `{domain}` from blacklist.")
+    else:
+        await interaction.response.send_message(f"`{domain}` is not in the blacklist.", ephemeral=True)
+
+@tree.command(name="blacklist_show", description="Show the current blacklist")
+async def blacklist_show(interaction: discord.Interaction): 
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    if not BLACKLIST:
+        await interaction.response.send_message("Blacklist is empty.")
+    else:
+        domains = sorted(BLACKLIST)
+        chunks = [domains[i:i+20] for i in range(0, len(domains), 30)]
+        response = []
+        for i, chunk in enumerate(chunks):
+            response.append(
+                f"**Blacklisted Domains** (page {i+1}/{len(chunks)}):\n" +
+                "\n".join(f"- `{domain}`" for domain in chunk)
+            )
+        await interaction.response.send_message("\n".join(response))
+
+@tree.command(name="blacklist_reload", description="Reload the blacklist from file")
+async def blacklist_reload(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    global BLACKLIST
+    BLACKLIST = load_json_list(BLACKLIST_PATH)
+    await interaction.response.send_message("Blacklist reloaded from file.")
+
+#----------------------- message handling -----------------------
 
 @client.event
 async def on_message(message):
@@ -368,123 +485,6 @@ async def on_message(message):
                 await message.channel.send("Yes ma'am!")
                 return
 
-    #handle commands
-    if content.startswith("lc!"):
-        global BLACKLIST, WHITELIST
-        #check permission
-        if not message.author.guild_permissions.manage_messages:
-            await message.channel.send("You don't have permission to configure the bot.")
-
-            #check if the user is trying to bypass the link checker
-            urls = re.findall(URL_REGEX, message.content)
-            for url in urls:
-                norm_url = url.lower().strip()
-                if norm_url not in last_scanned_urls:
-                    is_attempting_bypass = True
-                    last_scanned_urls.add(norm_url)
-                    await scan_queue.put((message, norm_url, is_attempting_bypass))
-            return
-
-        #command parsing
-        if content.startswith("lc!whitelist add "):
-            domain = content[len("lc!whitelist add "):].strip().lower()
-            WHITELIST.add(domain)
-            save_json_list(WHITELIST_PATH, WHITELIST)
-            await message.channel.send(f"Added `{domain}` to whitelist.")
-            logging.info(f"Added `{domain}` to whitelist by {message.author} ({message.author.id})")
-            return
-
-        elif content.startswith("lc!whitelist remove "):
-            domain = content[len("lc!whitelist remove "):].strip().lower()
-            if domain in WHITELIST:
-                WHITELIST.remove(domain)
-                save_json_list(WHITELIST_PATH, WHITELIST)
-                await message.channel.send(f"Removed `{domain}` from whitelist.")
-                logging.info(f"Removed `{domain}` from whitelist by {message.author} ({message.author.id})")
-            else:
-                await message.channel.send(f"`{domain}` is not in the whitelist.")
-            return
-
-        elif content == "lc!whitelist show":
-            if not WHITELIST:
-                await message.channel.send("Whitelist is empty.")
-            else:
-                domains = sorted(WHITELIST)
-                chunks = [domains[i:i+20] for i in range(0, len(domains), 30)]  # avoid message length errors
-                for i, chunk in enumerate(chunks):
-                    await message.channel.send(
-                        f"**Whitelisted Domains** (page {i+1}/{len(chunks)}):\n" +
-                        "\n".join(f"- `{domain}`" for domain in chunk)
-                    )
-            return
-
-        elif content == "lc!reload whitelist" or content == "lc!whitelist reload":
-            WHITELIST = load_json_list(WHITELIST_PATH)
-            await message.channel.send("Whitelist reloaded from file.")
-            logging.info("Whitelist reloaded from file.")
-            return
-
-        elif content.startswith("lc!blacklist add "):
-            domain = content[len("lc!blacklist add "):].strip().lower()
-            BLACKLIST.add(domain)
-            save_json_list(BLACKLIST_PATH, BLACKLIST)
-            await message.channel.send(f"Added `{domain}` to blacklist.")
-            logging.info(f"Added `{domain}` to blacklist by {message.author} ({message.author.id})")
-            return
-
-        elif content.startswith("lc!blacklist remove "):
-            domain = content[len("lc!blacklist remove "):].strip().lower()
-            if domain in BLACKLIST:
-                BLACKLIST.remove(domain)
-                save_json_list(BLACKLIST_PATH, BLACKLIST)
-                await message.channel.send(f"Removed `{domain}` from blacklist.")
-                logging.info(f"Removed `{domain}` from blacklist by {message.author} ({message.author.id})")
-            else:
-                await message.channel.send(f"`{domain}` is not in the blacklist.")
-            return
-
-        elif content == "lc!blacklist show":
-            if not BLACKLIST:
-                await message.channel.send("Blacklist is empty.")
-            else:
-                domains = sorted(BLACKLIST)
-                chunks = [domains[i:i+20] for i in range(0, len(domains), 30)]
-                for i, chunk in enumerate(chunks):
-                    await message.channel.send(
-                        f"**Blacklisted Domains** (page {i+1}/{len(chunks)}):\n" +
-                        "\n".join(f"- `{domain}`" for domain in chunk)
-                    )
-            return
-
-        elif content == "lc!reload blacklist"  or content == "lc!blacklist reload":
-            BLACKLIST = load_json_list(BLACKLIST_PATH)
-            await message.channel.send("Blacklist reloaded from file.")
-            logging.info("Blacklist reloaded from file.")
-            return
-
-        elif content == "lc!help":
-            help_message = (
-                "**Link Checker Bot Commands:**\n"
-                "```"
-                "lc!whitelist add <domain>    - Add domain to whitelist\n"
-                "lc!whitelist remove <domain> - Remove domain from whitelist\n"
-                "lc!whitelist show            - Show whitelisted domains\n"
-                "lc!reload whitelist          - Reload whitelist from file\n"
-                "lc!whitelist reload          - Same as above\n"
-                "lc!blacklist add <domain>    - Add domain to blacklist\n"
-                "lc!blacklist remove <domain> - Remove domain from blacklist\n"
-                "lc!blacklist show            - Show blacklisted domains\n"
-                "lc!reload blacklist          - Reload blacklist from file\n"
-                "lc!blacklist reload          - Same as above\n"
-                "lc!help                      - Show this help message\n"
-                "```"
-            )
-            await message.channel.send(help_message)
-            return
-        
-        await message.channel.send("Unknown command. Try `lc!help`.")
-        return
-    
     urls = re.findall(URL_REGEX, message.content)
     for url in urls:
         norm_url = url.lower().strip()
