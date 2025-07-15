@@ -311,6 +311,14 @@ async def vt_worker():
 
             except Exception as e:
                 logging.error(f"[VT Worker Error] Failed to scan {url}: {e}")
+                print(f"Error scanning {url}: {e}")
+                log_channel = client.get_channel(LOG_CHANNEL_ID)
+                responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                if log_channel and responsible_mod:
+                    await log_channel.send(
+                        f"{responsible_mod.mention}, I failed to scan a link!\n"
+                        f"[VT Worker Error] Error scanning `{url}`: {e})"
+                    )
                 #still pop on error to avoid locking queue
                 scans_in_progress.pop(norm_url, None)
 
