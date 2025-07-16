@@ -15,7 +15,7 @@ Setting up:
 - Set up a allowlist.json and a denylist.json
 - Run the python script.
 ----------------------------------------
-Usage: The bot is fully automatic. You can manipulate the allowlist and blocklist through slash commands.  
+Usage: The bot is fully automatic. You can manipulate the allowlist and denylist through slash commands.  
 
 ----------------------------------------
 Made for r/traaaaaaannnnnnnnnns2 official Discord server by Chalk.
