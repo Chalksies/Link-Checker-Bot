@@ -164,7 +164,7 @@ def extract_all_urls(message) -> set:
     return {url.lower().strip() for url in urls}
 
 #virustotal api interaction
-async def virustotal_lookup(session, url):
+async def virustotal_lookup(session, url, channel):
     scan_url = "https://www.virustotal.com/api/v3/urls"
     headers = { "x-apikey": VT_API_KEY }
 
@@ -189,26 +189,23 @@ async def virustotal_lookup(session, url):
     async with session.get(report_url, headers=headers) as resp:
         if resp.status != 200:
             print(f"Report fetch failed for {url}: HTTP {resp.status}")
-            #log_channel = client.get_channel(LOG_CHANNEL_ID)
-            #responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-            #if log_channel and responsible_mod:
-            #    await log_channel.send(
-            #        f"{responsible_mod.mention}, I failed to scan a link!\n"
-            #        f"(Report fetch failed for `{url}`: HTTP {resp.status})"
-            #    )
+            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            if responsible_mod:
+                await channel.send(
+                    f"{responsible_mod.mention}, I failed to scan a link!\n"
+                    f"(Report fetch failed: HTTP {resp.status})"
+                )
 
             raise Exception(f"Report fetch failed for {url}: HTTP {resp.status}")
         report = await resp.json()
 
     if "data" not in report or "attributes" not in report["data"]:
         print(f"Malformed response for {url}: {report}")
-        #log_channel = client.get_channel(LOG_CHANNEL_ID)
-        #responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-        #if log_channel and responsible_mod:
-        #    await log_channel.send(
-        #        f"{responsible_mod.mention}, I failed to scan a link!\n"
-        #        f"(Malformed response for `{url}`: {report})"
-        #    )
+        responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+        if responsible_mod:
+           await channel.send(
+                f"{responsible_mod.mention}, I failed to scan a link! Check logs.\n"
+            )
         raise Exception(f"Malformed response for {url}: {report}")
 
     return report
@@ -249,7 +246,7 @@ async def scan_worker():
                 continue
 
             #queue for vt
-            await vt_queue.put((message, url))
+            await vt_queue.put((message, url, message.channel))
             print(f"{datetime.now(timezone.utc).isoformat()} - Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
             last_scanned_urls.add(url)
 
