@@ -135,12 +135,10 @@ logging.basicConfig(
 async def resolve_short_url(message, url: str) -> str:
     try:
         parsed = extract_domain(url)
-        if parsed.hostname and parsed.hostname.lower() in SHORTENERS:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, allow_redirects=True, timeout=5) as resp:
-                    return str(resp.url)
-        else:
-            return url
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, allow_redirects=True, timeout=5) as resp:
+                return str(resp.url)
+
     except Exception as e:
         logging.info(f"Failed to resolve shortener: {e}")
         print(f"Failed to resolve shortener: {e}")
@@ -261,12 +259,14 @@ async def virustotal_lookup(session, url, channel):
 async def scan_worker():
     while True:
         message, url = await scan_queue.get()
-        resolved_url = await resolve_short_url(message, url)
-        if resolved_url != url:
-            logging.info(f"Expanded short URL: {url} → {resolved_url}")
-            print(f"Expanded short URL: {url} → {resolved_url}")
-        url = resolved_url
         domain = extract_domain(url)
+        if domain in SHORTENERS:
+            resolved_url = await resolve_short_url(message, url)
+            if resolved_url != url:
+                logging.info(f"Expanded short URL: {url} → {resolved_url}")
+                print(f"Expanded short URL: {url} → {resolved_url}")
+            url = resolved_url
+        
         #print(f"Processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
 
         try:
@@ -758,58 +758,60 @@ async def ping_command(interaction: discord.Interaction):
 
 @tree.command(name="help", description="Show help and usage info")
 async def help_command(interaction: discord.Interaction):
-    is_mod = interaction.user.guild_permissions.manage_messages
+    is_admin = interaction.user.guild_permissions.manage_messages
 
     embed = discord.Embed(
         title="LinkChecker Bot Help",
-        description="I scan every link sent in this server for safety.\nMalicious links are removed and logged.",
+        description="I monitor and scan links in messages and embeds. Malicious links are deleted and logged automatically.",
         color=discord.Color.blurple()
     )
 
     embed.add_field(
         name="General Commands",
-        value="• `/help`\n• `/ping`\n Rest of the commands are available to Moderators only.",
+        value="• `/ping`\n• `/help`\n Rest of the commands are available to moderators only.",
         inline=False
     )
 
-    if is_mod:
+    if is_admin:
         embed.add_field(
-            name="Moderator Commands",
+            name="Moderation Tools",
             value=(
-                "• `/config edit`\n"
-                "Edit the bot configuration. Available keys: `scan_sleep`, `scan_interval`, `responsible_moderator_id`, `max_malicious_messages`, `violation_window_minutes`, `log_channel_id`\n"
-                "• `/config reload`\n"
-                "Reload the bot configuration.\n"
                 "• `/config show`\n"
-                "Show the bot configuration.\n"
-                "---------------------------------------------------\n"
-                "• `/allowlist add`\n"
-                "Add domain to allowlist. (Syntax: discord.com)\n"
-                "• `/allowlist remove`\n"
-                "Remove domain from allowlist.\n"
-                "• `/allowlist reload`\n"
-                "Reload the allowlist. \n"
-                "• `/allowlist show`\n"
-                "Show the current allowlist. \n"
-                "---------------------------------------------------\n"
-                "• `/denylist add`\n"
-                "Add domain to denylist. \n"
-                "• `/denylist remove`\n"
-                "Remove domain from denylist. \n"
-                "• `/denylist reload`\n"
-                "Reload the denylist. \n"
-                "• `/denylist show`\n"
-                "Show the current denylist.\n"
-                "---------------------------------------------------\n"
-                "• `/shortenerlist add`\n"
-                "Add domain to the shortener list. \n"
-                "• `/shortenerlist remove`\n"
-                "Remove domain from the shortener list. \n"
-                "• `/shortenerlist reload`\n"
-                "Reload the shortener list. \n"
+                "• `/config edit`\n"
+                "• `/config reload`\n"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="Whitelist Commands",
+            value=(
+                "• `/whitelist add <domain>`\n"
+                "• `/whitelist remove <domain>`\n"
+                "• `/whitelist show`\n"
+                "• `/whitelist reload`"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="Blacklist Commands",
+            value=(
+                "• `/blacklist add <domain>`\n"
+                "• `/blacklist remove <domain>`\n"
+                "• `/blacklist show`\n"
+                "• `/blacklist reload`"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="Shortener Management",
+            value=(
+                "• `/shortenerlist add <domain>`\n"
+                "• `/shortenerlist remove <domain>`\n"
                 "• `/shortenerlist show`\n"
-                "Show the current shortener list.\n"
-                "---------------------------------------------------\n"
+                "• `/shortenerlist reload`"
             ),
             inline=False
         )
@@ -817,10 +819,10 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="Notes",
         value=(
-            "• Links in sent messages, their embeds and edited messages are scanned.\n"
-            "• Links that are denylisted/found to be malicious are deleted, and logged.\n"
-            "• Malicious domains are auto-denylisted.\n"
-            "• Users who spam malicious links are timed out automatically."
+            "• Links in sent messages, their embeds and edited messages are scanned\n"
+            "• Shortened URLs (e.g. `bit.ly`) are automatically resolved\n"
+            "• Malicious links are blacklisted\n"
+            "• Users spamming bad links are timed out and logged"
         ),
         inline=False
     )
