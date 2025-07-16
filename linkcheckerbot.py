@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import tomli
+import tomli_w
 import json
 import tldextract
 
@@ -47,15 +48,17 @@ DEFAULT_CONFIG = """
         logging_path = "logs"
         """
 
-if not os.path.exists("config.toml"):
-    with open("config.toml", "w") as f:
+CONFIG_PATH = "config.toml"
+
+if not os.path.exists(CONFIG_PATH):
+    with open(CONFIG_PATH, "w") as f:
         f.write(DEFAULT_CONFIG)
     print("Default config.toml created. Please edit it with your settings and restart the bot.")
     exit(1)
 
 def load_config():
     try:
-        return tomli.load(open("config.toml", "rb"))
+        return tomli.load(open(CONFIG_PATH, "rb"))
     except Exception as e:
         print(f"Failed to load config.toml: {e}")
         exit(1)
@@ -76,6 +79,10 @@ VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minu
 WHITELIST_PATH = config["structure"]["whitelist_path"]
 BLACKLIST_PATH = config["structure"]["blacklist_path"]
 LOGGING_PATH = config["structure"]["logging_path"]
+
+def save_config():
+    with open(CONFIG_PATH, "wb") as f:
+        tomli_w.dump(config, f)
 
 if not os.path.exists(WHITELIST_PATH):
     print("Default whitelist created, review and modify if needed.")
@@ -435,16 +442,24 @@ async def whitelist_show(interaction: discord.Interaction):
 
     if not WHITELIST:
         await interaction.response.send_message("Whitelist is empty.")
-    else:
-        domains = sorted(WHITELIST)
-        chunks = [domains[i:i+20] for i in range(0, len(domains), 30)]
-        response = []
-        for i, chunk in enumerate(chunks):
-            response.append(
-                f"**Whitelisted Domains** (page {i+1}/{len(chunks)}):\n" +
-                "\n".join(f"- `{domain}`" for domain in chunk)
-            )
-        await interaction.response.send_message("\n".join(response))
+        return
+
+    domains = sorted(WHITELIST)
+    await interaction.response.defer()
+    chunks = [domains[i:i + 30] for i in range(0, len(domains), 30)]
+
+    embeds = []
+    for i, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title=f"Whitelisted Domains (Page {i + 1}/{len(chunks)})",
+            description="\n".join(f"• `{domain}`" for domain in chunk),
+            color=discord.Color.green()
+        )
+        embeds.append(embed)
+
+    #send all embeds in a row for now
+    for embed in embeds:
+        await interaction.followup.send(embed=embed)
 
 @whitelist_group.command(name="reload", description="Reload the whitelist from file")
 async def whitelist_reload(interaction: discord.Interaction):
@@ -490,17 +505,25 @@ async def blacklist_show(interaction: discord.Interaction):
         return
 
     if not BLACKLIST:
-        await interaction.response.send_message("Blacklist is empty.")
-    else:
-        domains = sorted(BLACKLIST)
-        chunks = [domains[i:i+20] for i in range(0, len(domains), 30)]
-        response = []
-        for i, chunk in enumerate(chunks):
-            response.append(
-                f"**Blacklisted Domains** (page {i+1}/{len(chunks)}):\n" +
-                "\n".join(f"- `{domain}`" for domain in chunk)
-            )
-        await interaction.response.send_message("\n".join(response))
+        await interaction.response.send_message("Blacklist is empty.", ephemeral=True)
+        return
+
+    domains = sorted(BLACKLIST)
+    await interaction.response.defer()
+    chunks = [domains[i:i + 30] for i in range(0, len(domains), 30)]
+
+    embeds = []
+    for i, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title=f"Blacklisted Domains (Page {i + 1}/{len(chunks)})",
+            description="\n".join(f"• `{domain}`" for domain in chunk),
+            color=discord.Color.green()
+        )
+        embeds.append(embed)
+
+    #send all embeds in a row for now
+    for embed in embeds:
+        await interaction.followup.send(embed=embed)
 
 @blacklist_group.command(name="reload", description="Reload the blacklist from file")
 async def blacklist_reload(interaction: discord.Interaction):
@@ -512,25 +535,26 @@ async def blacklist_reload(interaction: discord.Interaction):
     BLACKLIST = load_json_list(BLACKLIST_PATH)
     await interaction.response.send_message("Blacklist reloaded from file.")
 
-@config_group.command(name="show", description="Show the current bot configuration")
+@config_group.command(name="show", description="Display the currently loaded configuration")
 async def config_show(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    try:
-        config_text = (
-            "**Current Configuration:**\n"
-            f"SCAN_SLEEP: {SCAN_SLEEP}s\n"
-            f"SCAN_INTERVAL: {SCAN_INTERVAL}s\n"
-            f"RESPONSIBLE_MODERATOR_ID: `{RESPONSIBLE_MODERATOR_ID}`\n"
-            f"MAX_MALICIOUS_MESSAGES: {MAX_MALICIOUS_MESSAGES}\n"
-            f"VIOLATION_WINDOW: {VIOLATION_WINDOW.total_seconds() // 60:.0f} minutes\n"
-            f"LOG_CHANNEL_ID: `{LOG_CHANNEL_ID}`\n"
-        )
-        await interaction.response.send_message(config_text)
-    except Exception as e:
-        await interaction.response.send_message(f"Failed to show config: {e}", ephemeral=True)
+    embed = discord.Embed(
+        title="Current Configuration",
+        color=discord.Color.gold()
+    )
+
+    embed.add_field(name="SCAN_INTERVAL", value=f"{SCAN_INTERVAL} seconds", inline=False)
+    embed.add_field(name="SCAN_SLEEP", value=f"{SCAN_SLEEP} per minute", inline=False)
+    embed.add_field(name="MAX_MALICIOUS_MESSAGES", value=str(MAX_MALICIOUS_MESSAGES), inline=False)
+    embed.add_field(name="VIOLATION_WINDOW", value=f"{int(VIOLATION_WINDOW.total_seconds() // 60)} minutes", inline=False)
+    embed.add_field(name="LOG_CHANNEL_ID", value=f"`{LOG_CHANNEL_ID}`", inline=False)
+    embed.add_field(name="RESPONSIBLE_MODERATOR_ID", value=f"`{RESPONSIBLE_MODERATOR_ID}`", inline=False)
+
+    await interaction.response.send_message(embed=embed)
+
 
 @config_group.command(name="reload", description="Reload the bot configuration from file")
 async def config_reload(interaction: discord.Interaction):
@@ -541,6 +565,114 @@ async def config_reload(interaction: discord.Interaction):
     global config
     config = load_config()
     await interaction.response.send_message("Configuration reloaded from file.")
+
+@config_group.command(name="edit", description="Edit a config option (in memory)")
+@app_commands.describe(
+    key="Name of the config key (/help for details)",
+    value="New value for the config key"
+)
+async def config_edit(interaction: discord.Interaction, key: str, value: str):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+    
+    key = key.lower().strip()
+
+    if key == "scan_sleep":
+        global SCAN_SLEEP
+        SCAN_SLEEP = int(value)
+        config["virustotal"]["scan_sleep"] = SCAN_SLEEP
+    elif key == "scan_interval":
+        global SCAN_INTERVAL
+        SCAN_INTERVAL = int(value)
+        config["virustotal"]["scan_interval_seconds"] = SCAN_INTERVAL
+    elif key == "responsible_moderator_id": 
+        global RESPONSIBLE_MODERATOR_ID
+        RESPONSIBLE_MODERATOR_ID = int(value)
+        config["bot"]["responsible_moderator_id"] = RESPONSIBLE_MODERATOR_ID
+    elif key == "max_malicious_messages":
+        global MAX_MALICIOUS_MESSAGES
+        MAX_MALICIOUS_MESSAGES = int(value)
+        config["moderation"]["max_violations"] = MAX_MALICIOUS_MESSAGES
+    elif key == "violation_window_minutes":
+        global VIOLATION_WINDOW
+        VIOLATION_WINDOW = timedelta(minutes=int(value))
+        config["moderation"]["violation_window_minutes"] = int(value)
+    elif key == "log_channel_id":
+        global LOG_CHANNEL_ID
+        LOG_CHANNEL_ID = int(value)
+        config["moderation"]["log_channel_id"] = LOG_CHANNEL_ID
+    else:
+        await interaction.response.send_message(
+            f"Unknown config key: `{key}`\n"
+            f"Available keys are: scan_sleep, scan_interval, responsible_moderator_id, max_malicious_messages, violation_window_minutes, log_channel_id", 
+            ephemeral=True)
+        return
+    
+    try: 
+        save_config()
+        await interaction.response.send_message(f"Updated `{key}` to `{value}` and saved to config file.")
+    except Exception as e:
+        await interaction.response.send_message(f"Failed to save config to file: {e}", ephemeral=True)
+        return
+    
+@tree.command(name="ping", description="Check if the bot is online")
+async def ping(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    await interaction.response.send_message("Pong! The bot is online.")
+
+@tree.command(name="help", description="Show help and usage info")
+async def help_command(interaction: discord.Interaction):
+    is_mod = interaction.user.guild_permissions.manage_messages
+
+    embed = discord.Embed(
+        title="LinkChecker Bot Help",
+        description="I scan every link sent in this server for safety.\nMalicious links are removed and logged.",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="General Commands",
+        value="• `/help`\n• `/ping`\n Rest of the commands are available to Moderators only.",
+        inline=False
+    )
+
+    if is_mod:
+        embed.add_field(
+            name="Admin Commands",
+            value=(
+                "• `/config edit`\n"
+                "• `/config reload`\n"
+                "• `/config show`\n"
+                "• `/whitelist add`\n"
+                "• `/whitelist remove`\n"
+                "• `/whitelist reload`\n"
+                "• `/whitelist show`\n"
+                "• `/blacklist add`\n"
+                "• `/blacklist remove`\n"
+                "• `/blacklist reload`\n"
+                "• `/blacklist show`\n"
+            ),
+            inline=False
+        )
+
+    embed.add_field(
+        name="Notes",
+        value=(
+            "• Links in embeds and edited messages are scanned\n"
+            "• Malicious domains are auto-blacklisted\n"
+            "• Users who spam malicious links are timed out"
+        ),
+        inline=False
+    )
+
+    await interaction.response.send_message(embed=embed)
+
+        
+    
 
 #----------------------- message handling -----------------------
 
