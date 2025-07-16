@@ -674,9 +674,10 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="Notes",
         value=(
-            "• Links in embeds and edited messages are scanned.\n"
-            "• Malicious domains are auto-denylisted\n"
-            "• Users who spam malicious links are timed out"
+            "• Links in sent messages, their embeds and edited messages are scanned.\n"
+            "• Links that are denylisted/found to be malicious are deleted, and logged."
+            "• Malicious domains are auto-denylisted.\n"
+            "• Users who spam malicious links are timed out automatically."
         ),
         inline=False
     )
