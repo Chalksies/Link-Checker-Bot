@@ -5,7 +5,7 @@ Features:
 - Scaning messages for links, both on new message and on edits.
 - A whitelist and blacklist that can be manipulated from discord via slash commands.
 - Logging (on device and on discord)
-- Malicious spam detection.
+- Timing out users on malicious spam detection.
 ----------------------------------------
 Setting up:  
 - Create bot via Discord Developer Portal
