@@ -13,7 +13,7 @@ import tomli_w
 import json
 import tldextract
 
-DEFAULT_WHITELIST = {
+DEFAULT_ALLOWLIST = {
     "domains": [
         "discord.com",
         "discordapp.com",
@@ -43,8 +43,8 @@ DEFAULT_CONFIG = """
         violation_window_minutes = 2
 
         [structure]
-        whitelist_path = "whitelist.json"
-        blacklist_path = "blacklist.json"
+        allowlist_path = "allowlist.json"
+        denylist_path = "denylist.json"
         logging_path = "logs"
         """
 
@@ -76,16 +76,16 @@ SCAN_INTERVAL = config["virustotal"]["scan_interval_seconds"]
 MAX_MALICIOUS_MESSAGES = config["moderation"]["max_violations"]
 VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minutes"])
 
-WHITELIST_PATH = config["structure"]["whitelist_path"]
-BLACKLIST_PATH = config["structure"]["blacklist_path"]
+ALLOWLIST_PATH = config["structure"]["allowlist_path"]
+DENYLIST_PATH = config["structure"]["denylist_path"]
 LOGGING_PATH = config["structure"]["logging_path"]
 
 def save_config():
     with open(CONFIG_PATH, "wb") as f:
         tomli_w.dump(config, f)
 
-if not os.path.exists(WHITELIST_PATH):
-    print("Default whitelist created, review and modify if needed.")
+if not os.path.exists(ALLOWLIST_PATH):
+    print("Default allowlist created, review and modify if needed.")
 
 def load_json_list(path, key="domains", default=None):
     if not os.path.exists(path):
@@ -103,8 +103,8 @@ def save_json_list(path, domain_set, key="domains"):
     with open(path, "w") as f:
         json.dump({key: sorted(domain_set)}, f, indent=4)
 
-WHITELIST = load_json_list("whitelist.json", default=DEFAULT_WHITELIST)
-BLACKLIST = load_json_list("blacklist.json", default={"domains": []})
+ALLOWLIST = load_json_list("allowlist.json", default=DEFAULT_ALLOWLIST)
+DENYLIST = load_json_list("denylist.json", default={"domains": []})
 
 #link regex
 URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
@@ -131,12 +131,12 @@ user_violations = defaultdict(list)  # track user violations
 
 tree = app_commands.CommandTree(client)
 
-whitelist_group = app_commands.Group(name="whitelist", description="Manage the whitelist")
-blacklist_group = app_commands.Group(name="blacklist", description="Manage the blacklist")
+allowlist_group = app_commands.Group(name="allowlist", description="Manage the allowlist")
+denylist_group = app_commands.Group(name="denylist", description="Manage the denylist")
 config_group = app_commands.Group(name="config", description="Manage the bot configuration")
 
-tree.add_command(whitelist_group)
-tree.add_command(blacklist_group)
+tree.add_command(allowlist_group)
+tree.add_command(denylist_group)
 tree.add_command(config_group)
 
 def vt_url_id(url: str) -> str:
@@ -232,24 +232,24 @@ async def scan_worker():
 
             domain = extract_domain(url)
 
-            #blacklist check
-            if domain in BLACKLIST:
+            #denylist check
+            if domain in DENYLIST:
                 await message.delete()
-                logging.info(f"[BLACKLIST] Deleted message with blacklisted link: {url} from {message.author} ({message.author.id})")
-                await message.channel.send("A blacklisted link was removed.")
+                logging.info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
+                await message.channel.send("A denylisted link was removed.")
                 log_channel = client.get_channel(LOG_CHANNEL_ID)
                 if log_channel:
                     await log_channel.send(
-                        f" A message containing \"`{url}`\" was removed due to being blacklisted.\n"
+                        f" A message containing \"`{url}`\" was removed due to being denylisted.\n"
                         f" Message author: {message.author.mention} ({message.author.id})\n"
                         f" Channel: {message.channel.mention}\n"
                         f" Timestamp: {datetime.now(timezone.utc).isoformat()}"
                     )
 
-            #whitelist check (skip)
-            if domain in WHITELIST:
-                logging.info(f"Skipping whitelisted link: {url} from {message.author} ({message.author.id}) in #{message.channel}")
-                print(f"Skipping whitelisted link: {url}")
+            #allowlist check (skip)
+            if domain in ALLOWLIST:
+                logging.info(f"Skipping allowlisted link: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+                print(f"Skipping allowlisted link: {url}")
                 continue
 
             #queue for vt
@@ -287,13 +287,13 @@ async def vt_worker():
 
                 if detections > 0:
                     log_channel = client.get_channel(LOG_CHANNEL_ID)
-                    #blacklist and save
+                    #denylist and save
                     domain = extract_domain(url)
-                    if domain not in BLACKLIST:
-                        BLACKLIST.add(domain)
-                        logging.info(f"Adding {domain} to blacklist due to malicious link: {url}")
-                        print(f"Adding {domain} to blacklist due to malicious link: {url}")
-                    save_json_list(BLACKLIST_PATH, BLACKLIST)
+                    if domain not in DENYLIST:
+                        DENYLIST.add(domain)
+                        logging.info(f"Adding {domain} to denylist due to malicious link: {url}")
+                        print(f"Adding {domain} to denylist due to malicious link: {url}")
+                    save_json_list(DENYLIST_PATH, DENYLIST)
 
                     try:
                         await message.delete
@@ -407,51 +407,51 @@ async def on_ready():
     client.loop.create_task(scan_worker())
     client.loop.create_task(vt_worker())
 
-@whitelist_group.command(name="add", description="Add a domain to the whitelist")
-@app_commands.describe(domain="The domain to whitelist (e.g. example.com)")
-async def whitelist_add(interaction: discord.Interaction, domain: str):
+@allowlist_group.command(name="add", description="Add a domain to the allowlist")
+@app_commands.describe(domain="The domain to allowlist (e.g. example.com)")
+async def allowlist_add(interaction: discord.Interaction, domain: str):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
     domain = domain.lower().strip()
-    WHITELIST.add(domain)
-    save_json_list(WHITELIST_PATH, WHITELIST)
-    await interaction.response.send_message(f"Added `{domain}` to whitelist.")
+    ALLOWLIST.add(domain)
+    save_json_list(ALLOWLIST_PATH, ALLOWLIST)
+    await interaction.response.send_message(f"Added `{domain}` to allowlist.")
 
-@whitelist_group.command(name="remove", description="Remove a domain from the whitelist")
-@app_commands.describe(domain="The domain to remove from the whitelist")
-async def whitelist_remove(interaction: discord.Interaction, domain: str):
+@allowlist_group.command(name="remove", description="Remove a domain from the allowlist")
+@app_commands.describe(domain="The domain to remove from the allowlist")
+async def allowlist_remove(interaction: discord.Interaction, domain: str):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
     domain = domain.lower().strip()
-    if domain in WHITELIST:
-        WHITELIST.remove(domain)
-        save_json_list(WHITELIST_PATH, WHITELIST)
-        await interaction.response.send_message(f"Removed `{domain}` from whitelist.")
+    if domain in ALLOWLIST:
+        ALLOWLIST.remove(domain)
+        save_json_list(ALLOWLIST_PATH, ALLOWLIST)
+        await interaction.response.send_message(f"Removed `{domain}` from allowlist.")
     else:
-        await interaction.response.send_message(f"`{domain}` is not in the whitelist.", ephemeral=True)
+        await interaction.response.send_message(f"`{domain}` is not in the allowlist.", ephemeral=True)
 
-@whitelist_group.command(name="show", description="Show the current whitelist")
-async def whitelist_show(interaction: discord.Interaction):
+@allowlist_group.command(name="show", description="Show the current allowlist")
+async def allowlist_show(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    if not WHITELIST:
-        await interaction.response.send_message("Whitelist is empty.")
+    if not ALLOWLIST:
+        await interaction.response.send_message("Allowlist is empty.")
         return
 
-    domains = sorted(WHITELIST)
+    domains = sorted(ALLOWLIST)
     await interaction.response.defer()
     chunks = [domains[i:i + 30] for i in range(0, len(domains), 30)]
 
     embeds = []
     for i, chunk in enumerate(chunks):
         embed = discord.Embed(
-            title=f"Whitelisted Domains (Page {i + 1}/{len(chunks)})",
+            title=f"Allowlisted Domains (Page {i + 1}/{len(chunks)})",
             description="\n".join(f"• `{domain}`" for domain in chunk),
             color=discord.Color.green()
         )
@@ -461,61 +461,61 @@ async def whitelist_show(interaction: discord.Interaction):
     for embed in embeds:
         await interaction.followup.send(embed=embed)
 
-@whitelist_group.command(name="reload", description="Reload the whitelist from file")
-async def whitelist_reload(interaction: discord.Interaction):
+@allowlist_group.command(name="reload", description="Reload the allowlist from file")
+async def allowlist_reload(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    global WHITELIST
-    WHITELIST = load_json_list(WHITELIST_PATH)
-    await interaction.response.send_message("Whitelist reloaded from file.")
+    global ALLOWLIST
+    ALLOWLIST = load_json_list(ALLOWLIST_PATH)
+    await interaction.response.send_message("Allowlist reloaded from file.")
 
-@blacklist_group.command(name="add", description="Add a domain to the blacklist")
-@app_commands.describe(domain="The domain to blacklist (e.g. example.com)")
-async def blacklist_add(interaction: discord.Interaction, domain: str):
-    if not interaction.user.guild_permissions.manage_messages:
-        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
-        return
-
-    domain = domain.lower().strip()
-    BLACKLIST.add(domain)
-    save_json_list(BLACKLIST_PATH, BLACKLIST)
-    await interaction.response.send_message(f"Added `{domain}` to blacklist.")  
-
-@blacklist_group.command(name="remove", description="Remove a domain from the blacklist")
-@app_commands.describe(domain="The domain to remove from the blacklist")
-async def blacklist_remove(interaction: discord.Interaction, domain: str):  
+@denylist_group.command(name="add", description="Add a domain to the denylist")
+@app_commands.describe(domain="The domain to denylist (e.g. example.com)")
+async def denylist_add(interaction: discord.Interaction, domain: str):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
     domain = domain.lower().strip()
-    if domain in BLACKLIST:
-        BLACKLIST.remove(domain)
-        save_json_list(BLACKLIST_PATH, BLACKLIST)
-        await interaction.response.send_message(f"Removed `{domain}` from blacklist.")
+    DENYLIST.add(domain)
+    save_json_list(DENYLIST_PATH, DENYLIST)
+    await interaction.response.send_message(f"Added `{domain}` to denylist.")  
+
+@denylist_group.command(name="remove", description="Remove a domain from the denylist")
+@app_commands.describe(domain="The domain to remove from the denylist")
+async def denylist_remove(interaction: discord.Interaction, domain: str):  
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    domain = domain.lower().strip()
+    if domain in DENYLIST:
+        DENYLIST.remove(domain)
+        save_json_list(DENYLIST_PATH, DENYLIST)
+        await interaction.response.send_message(f"Removed `{domain}` from denylist.")
     else:
-        await interaction.response.send_message(f"`{domain}` is not in the blacklist.", ephemeral=True)
+        await interaction.response.send_message(f"`{domain}` is not in the denylist.", ephemeral=True)
 
-@blacklist_group.command(name="show", description="Show the current blacklist")
-async def blacklist_show(interaction: discord.Interaction): 
+@denylist_group.command(name="show", description="Show the current denylist")
+async def denylist_show(interaction: discord.Interaction): 
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    if not BLACKLIST:
-        await interaction.response.send_message("Blacklist is empty.", ephemeral=True)
+    if not DENYLIST:
+        await interaction.response.send_message("Denylist is empty.", ephemeral=True)
         return
 
-    domains = sorted(BLACKLIST)
+    domains = sorted(DENYLIST)
     await interaction.response.defer()
     chunks = [domains[i:i + 30] for i in range(0, len(domains), 30)]
 
     embeds = []
     for i, chunk in enumerate(chunks):
         embed = discord.Embed(
-            title=f"Blacklisted Domains (Page {i + 1}/{len(chunks)})",
+            title=f"Denylisted Domains (Page {i + 1}/{len(chunks)})",
             description="\n".join(f"• `{domain}`" for domain in chunk),
             color=discord.Color.green()
         )
@@ -525,15 +525,15 @@ async def blacklist_show(interaction: discord.Interaction):
     for embed in embeds:
         await interaction.followup.send(embed=embed)
 
-@blacklist_group.command(name="reload", description="Reload the blacklist from file")
-async def blacklist_reload(interaction: discord.Interaction):
+@denylist_group.command(name="reload", description="Reload the denylist from file")
+async def denylist_reload(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    global BLACKLIST
-    BLACKLIST = load_json_list(BLACKLIST_PATH)
-    await interaction.response.send_message("Blacklist reloaded from file.")
+    global DENYLIST
+    DENYLIST = load_json_list(DENYLIST_PATH)
+    await interaction.response.send_message("Denylist reloaded from file.")
 
 @config_group.command(name="show", description="Display the currently loaded configuration")
 async def config_show(interaction: discord.Interaction):
@@ -645,16 +645,28 @@ async def help_command(interaction: discord.Interaction):
             name="Admin Commands",
             value=(
                 "• `/config edit`\n"
+                "Edit the bot configuration. Available keys: `scan_sleep`, `scan_interval`, `responsible_moderator_id`, `max_malicious_messages`, `violation_window_minutes`, `log_channel_id`\n"
                 "• `/config reload`\n"
+                "Reload the bot configuration.\n"
                 "• `/config show`\n"
-                "• `/whitelist add`\n"
-                "• `/whitelist remove`\n"
-                "• `/whitelist reload`\n"
-                "• `/whitelist show`\n"
-                "• `/blacklist add`\n"
-                "• `/blacklist remove`\n"
-                "• `/blacklist reload`\n"
-                "• `/blacklist show`\n"
+                "Show the bot configuration.\n"
+                "---------------------------------------------------\n"
+                "• `/allowlist add`\n"
+                "Add domain to allowlist. (Syntax: discord.com)\n"
+                "• `/allowlist remove`\n"
+                "Remove domain from allowlist.\n"
+                "• `/allowlist reload`\n"
+                "Reload the allowlist. \n"
+                "• `/allowlist show`\n"
+                "Show the current allowlist. \n"
+                "• `/denylist add`\n"
+                "Add domain to denylist. \n"
+                "• `/denylist remove`\n"
+                "Remove domain from denylist. \n"
+                "• `/denylist reload`\n"
+                "Reload the denylist. \n"
+                "• `/denylist show`\n"
+                "Show the current denylist."
             ),
             inline=False
         )
@@ -662,8 +674,8 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="Notes",
         value=(
-            "• Links in embeds and edited messages are scanned\n"
-            "• Malicious domains are auto-blacklisted\n"
+            "• Links in embeds and edited messages are scanned.\n"
+            "• Malicious domains are auto-denylisted\n"
             "• Users who spam malicious links are timed out"
         ),
         inline=False
