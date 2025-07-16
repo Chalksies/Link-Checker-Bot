@@ -616,13 +616,28 @@ async def config_edit(interaction: discord.Interaction, key: str, value: str):
         await interaction.response.send_message(f"Failed to save config to file: {e}", ephemeral=True)
         return
     
-@tree.command(name="ping", description="Check if the bot is online")
-async def ping(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.manage_messages:
-        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
-        return
+@tree.command(name="ping", description="Show bot latency and response time")
+async def ping_command(interaction: discord.Interaction):
+    heartbeat = round(client.latency * 1000)
 
-    await interaction.response.send_message("Pong! The bot is online.")
+    await interaction.response.defer()
+    before = discord.utils.utcnow()
+
+    # The I/O call that actually touches Discord
+    await interaction.followup.send("Measuring...")  # throwaway message
+
+    after = discord.utils.utcnow()
+    roundtrip = round((after - before).total_seconds() * 1000)
+
+    embed = discord.Embed(
+        title="Pong :3",
+        color=discord.Color.teal()
+    )
+    embed.add_field(name="Heartbeat Latency", value=f"{heartbeat}ms", inline=True)
+    embed.add_field(name="Roundtrip Latency", value=f"{roundtrip}ms", inline=True)
+
+    # Update the message with real data
+    await interaction.edit_original_response(content=None, embed=embed)
 
 @tree.command(name="help", description="Show help and usage info")
 async def help_command(interaction: discord.Interaction):
