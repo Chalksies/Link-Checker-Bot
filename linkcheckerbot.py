@@ -675,7 +675,7 @@ async def help_command(interaction: discord.Interaction):
         name="Notes",
         value=(
             "• Links in sent messages, their embeds and edited messages are scanned.\n"
-            "• Links that are denylisted/found to be malicious are deleted, and logged."
+            "• Links that are denylisted/found to be malicious are deleted, and logged.\n"
             "• Malicious domains are auto-denylisted.\n"
             "• Users who spam malicious links are timed out automatically."
         ),
