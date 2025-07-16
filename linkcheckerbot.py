@@ -642,7 +642,7 @@ async def help_command(interaction: discord.Interaction):
 
     if is_mod:
         embed.add_field(
-            name="Admin Commands",
+            name="Moderator Commands",
             value=(
                 "• `/config edit`\n"
                 "Edit the bot configuration. Available keys: `scan_sleep`, `scan_interval`, `responsible_moderator_id`, `max_malicious_messages`, `violation_window_minutes`, `log_channel_id`\n"
