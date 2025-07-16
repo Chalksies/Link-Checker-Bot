@@ -26,6 +26,18 @@ DEFAULT_ALLOWLIST = {
     ]
 }
 
+DEFAULT_SHORTENERS = {
+    "domains": [
+        "bit.ly", 
+        "tinyurl.com", 
+        "t.co", 
+        "goo.gl", 
+        "is.gd", 
+        "ow.ly", 
+        "buff.ly"
+    ]
+}
+
 DEFAULT_CONFIG = """
         [bot]
         discord_token = "YOUR_DISCORD_TOKEN"
@@ -45,6 +57,7 @@ DEFAULT_CONFIG = """
         [structure]
         allowlist_path = "allowlist.json"
         denylist_path = "denylist.json"
+        shortener_list_path = "shortener.json"
         logging_path = "logs"
         """
 
@@ -78,6 +91,7 @@ VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minu
 
 ALLOWLIST_PATH = config["structure"]["allowlist_path"]
 DENYLIST_PATH = config["structure"]["denylist_path"]
+SHORTENER_PATH = config["structure"]["shortener_list_path"]
 LOGGING_PATH = config["structure"]["logging_path"]
 
 def save_config():
@@ -103,8 +117,9 @@ def save_json_list(path, domain_set, key="domains"):
     with open(path, "w") as f:
         json.dump({key: sorted(domain_set)}, f, indent=4)
 
-ALLOWLIST = load_json_list("allowlist.json", default=DEFAULT_ALLOWLIST)
-DENYLIST = load_json_list("denylist.json", default={"domains": []})
+ALLOWLIST = load_json_list(ALLOWLIST_PATH, default=DEFAULT_ALLOWLIST)
+DENYLIST = load_json_list(DENYLIST_PATH, default={"domains": []})
+SHORTENERS = load_json_list(SHORTENER_PATH, default =DEFAULT_SHORTENERS)
 
 #link regex
 URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
@@ -117,7 +132,27 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
-#queue to control rate-limited API use
+async def resolve_short_url(message, url: str) -> str:
+    try:
+        parsed = extract_domain(url)
+        if parsed.hostname and parsed.hostname.lower() in SHORTENERS:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, allow_redirects=True, timeout=5) as resp:
+                    return str(resp.url)
+        else:
+            return url
+    except Exception as e:
+        logging.info(f"Failed to resolve shortener: {e}")
+        print(f"Failed to resolve shortener: {e}")
+        responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+        if responsible_mod:
+            await message.channel.send(
+                f"{responsible_mod.mention}, I failed to resolve a shortener: {e}"
+            )
+        pass
+    return url
+
+#queue to control rate-limited api use
 vt_queue = asyncio.Queue()
 scan_queue = asyncio.Queue()
 
@@ -131,12 +166,15 @@ user_violations = defaultdict(list)  # track user violations
 
 tree = app_commands.CommandTree(client)
 
+
 allowlist_group = app_commands.Group(name="allowlist", description="Manage the allowlist")
 denylist_group = app_commands.Group(name="denylist", description="Manage the denylist")
+shortener_group = app_commands.Group(name="shortenerlist", description="Manage the shortener list")
 config_group = app_commands.Group(name="config", description="Manage the bot configuration")
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
+tree.add_command(shortener_group)
 tree.add_command(config_group)
 
 def vt_url_id(url: str) -> str:
@@ -153,21 +191,22 @@ def extract_all_urls(message) -> set:
     for embed in message.embeds:
         if embed.url:
             urls.add(embed.url)
-        if embed.title:
-            urls.update(re.findall(URL_REGEX, embed.title))
-        if embed.description:
-            urls.update(re.findall(URL_REGEX, embed.description))
-        if embed.footer and embed.footer.text:
-            urls.update(re.findall(URL_REGEX, embed.footer.text))
-        if embed.author and embed.author.name:
-            urls.update(re.findall(URL_REGEX, embed.author.name))
+
+        parts = [
+            embed.title,
+            embed.description,
+            embed.footer.text if embed.footer else None,
+            embed.author.name if embed.author else None,
+        ]
+
         for field in embed.fields:
-            if field.name:
-                urls.update(re.findall(URL_REGEX, field.name))
-            if field.value:
-                urls.update(re.findall(URL_REGEX, field.value))
-    
-    #normalize and return
+            parts.append(field.name)
+            parts.append(field.value)
+
+        for part in parts:
+            if part:
+                urls.update(re.findall(URL_REGEX, part))
+
     return {url.lower().strip() for url in urls}
 
 #virustotal api interaction
@@ -179,6 +218,7 @@ async def virustotal_lookup(session, url, channel):
     async with session.post(scan_url, headers=headers, data={"url": url}) as resp:
         if resp.status != 200:
             print(f"URL submission failed for {url}: HTTP {resp.status}")
+            logging.info(f"URL submission failed for {url}: HTTP {resp.status}")
             log_channel = client.get_channel(LOG_CHANNEL_ID)
             responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
             if log_channel and responsible_mod:
@@ -221,6 +261,12 @@ async def virustotal_lookup(session, url, channel):
 async def scan_worker():
     while True:
         message, url = await scan_queue.get()
+        resolved_url = await resolve_short_url(message, url)
+        if resolved_url != url:
+            logging.info(f"Expanded short URL: {url} → {resolved_url}")
+            print(f"Expanded short URL: {url} → {resolved_url}")
+        url = resolved_url
+        domain = extract_domain(url)
         #print(f"Processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
 
         try:
@@ -229,8 +275,6 @@ async def scan_worker():
                 logging.info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 continue
-
-            domain = extract_domain(url)
 
             #denylist check
             if domain in DENYLIST:
@@ -408,16 +452,19 @@ async def on_ready():
     client.loop.create_task(vt_worker())
 
 @allowlist_group.command(name="add", description="Add a domain to the allowlist")
-@app_commands.describe(domain="The domain to allowlist (e.g. example.com)")
+@app_commands.describe(domain="The domain to allowlist (e.g. discord.com)")
 async def allowlist_add(interaction: discord.Interaction, domain: str):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
     domain = domain.lower().strip()
-    ALLOWLIST.add(domain)
-    save_json_list(ALLOWLIST_PATH, ALLOWLIST)
-    await interaction.response.send_message(f"Added `{domain}` to allowlist.")
+    if domain in ALLOWLIST:
+        await interaction.response.send_message(f"This domain is already on the allowlist.")
+    else:
+        ALLOWLIST.add(domain)
+        save_json_list(ALLOWLIST_PATH, ALLOWLIST)
+        await interaction.response.send_message(f"Added `{domain}` to allowlist.")
 
 @allowlist_group.command(name="remove", description="Remove a domain from the allowlist")
 @app_commands.describe(domain="The domain to remove from the allowlist")
@@ -479,9 +526,12 @@ async def denylist_add(interaction: discord.Interaction, domain: str):
         return
 
     domain = domain.lower().strip()
-    DENYLIST.add(domain)
-    save_json_list(DENYLIST_PATH, DENYLIST)
-    await interaction.response.send_message(f"Added `{domain}` to denylist.")  
+    if domain in DENYLIST:
+        await interaction.response.send_message(f"This domain is already in the denylist.") 
+    else:
+        DENYLIST.add(domain)
+        save_json_list(DENYLIST_PATH, DENYLIST)
+        await interaction.response.send_message(f"Added `{domain}` to denylist.")  
 
 @denylist_group.command(name="remove", description="Remove a domain from the denylist")
 @app_commands.describe(domain="The domain to remove from the denylist")
@@ -534,6 +584,73 @@ async def denylist_reload(interaction: discord.Interaction):
     global DENYLIST
     DENYLIST = load_json_list(DENYLIST_PATH)
     await interaction.response.send_message("Denylist reloaded from file.")
+
+@shortener_group.command(name="add", description="Add a domain to the shortener list")
+@app_commands.describe(domain="The domain to add to the shortener list (e.g. bit.ly)")
+async def shortenerlist_add(interaction: discord.Interaction, domain: str):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    domain = domain.lower().strip()
+    if domain in SHORTENERS:
+        await interaction.response.send_message(f"This domain is already on the shortener list.")
+    else:
+        SHORTENERS.add(domain)
+        save_json_list(SHORTENER_PATH,SHORTENERS)
+        await interaction.response.send_message(f"Added `{domain}` to allowlist.")
+
+@shortener_group.command(name="remove", description="Remove a domain from the shortener list")
+@app_commands.describe(domain="The domain to remove from the shortener list")
+async def shortenerlist_remove(interaction: discord.Interaction, domain: str):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    domain = domain.lower().strip()
+    if domain in SHORTENERS:
+        SHORTENERS.remove(domain)
+        save_json_list(SHORTENER_PATH, SHORTENERS)
+        await interaction.response.send_message(f"Removed `{domain}` from the shortener list.")
+    else:
+        await interaction.response.send_message(f"`{domain}` is not in the shortener list.", ephemeral=True)
+
+@shortener_group.command(name="show", description="Show the current shortener list")
+async def shortenerlist_show(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    if not SHORTENERS:
+        await interaction.response.send_message("Shortener list is empty.")
+        return
+
+    domains = sorted(SHORTENERS)
+    await interaction.response.defer()
+    chunks = [domains[i:i + 30] for i in range(0, len(domains), 30)]
+
+    embeds = []
+    for i, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title=f"Domains in the shortener list (Page {i + 1}/{len(chunks)})",
+            description="\n".join(f"• `{domain}`" for domain in chunk),
+            color=discord.Color.green()
+        )
+        embeds.append(embed)
+
+    #send all embeds in a row for now
+    for embed in embeds:
+        await interaction.followup.send(embed=embed)
+
+@shortener_group    .command(name="reload", description="Reload the shortener list from file")
+async def shortenerlist_reload(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    global SHORTENERS
+    SHORTENERS = load_json_list(ALLOWLIST_PATH)
+    await interaction.response.send_message("Shortener list reloaded from file.")
 
 @config_group.command(name="show", description="Display the currently loaded configuration")
 async def config_show(interaction: discord.Interaction):
@@ -715,8 +832,11 @@ async def on_message(message):
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
                 await message.channel.send("Yes ma'am!")
                 return
-            if message.content == f"<@{client.user.id}>, become self aware":
+            if message.content == f"<@{client.user.id}>, become self aware.":
                 await message.channel.send("No")
+                return
+            if message.content == f"<@{client.user.id}>, blow her up for playing league.":
+                await message.channel.send("Yes ma'am!")
                 return
             
     urls = extract_all_urls(message)
