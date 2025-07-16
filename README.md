@@ -3,6 +3,7 @@
 ----------------------------------------
 Features: 
 - Scaning messages for links, both on new message and on edits.
+- Resolving shortened links before scan.
 - A allowlist and blocklist that can be manipulated from discord via slash commands.
 - Logging (on device and on discord)
 - Timing out users on malicious spam detection.

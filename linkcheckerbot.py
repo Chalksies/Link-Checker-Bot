@@ -791,6 +791,7 @@ async def help_command(interaction: discord.Interaction):
                 "Reload the allowlist. \n"
                 "• `/allowlist show`\n"
                 "Show the current allowlist. \n"
+                "---------------------------------------------------\n"
                 "• `/denylist add`\n"
                 "Add domain to denylist. \n"
                 "• `/denylist remove`\n"
@@ -798,7 +799,17 @@ async def help_command(interaction: discord.Interaction):
                 "• `/denylist reload`\n"
                 "Reload the denylist. \n"
                 "• `/denylist show`\n"
-                "Show the current denylist."
+                "Show the current denylist.\n"
+                "---------------------------------------------------\n"
+                "• `/shortenerlist add`\n"
+                "Add domain to the shortener list. \n"
+                "• `/shortenerlist remove`\n"
+                "Remove domain from the shortener list. \n"
+                "• `/shortenerlist reload`\n"
+                "Reload the shortener list. \n"
+                "• `/shortenerlist show`\n"
+                "Show the current shortener list.\n"
+                "---------------------------------------------------\n"
             ),
             inline=False
         )
