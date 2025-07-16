@@ -33,7 +33,8 @@ DEFAULT_CONFIG = """
 
         [virustotal]
         api_key = "YOUR_VIRUSTOTAL_API_KEY"
-        scan_interval_seconds = 10
+        scan_sleep = 10
+        scan_interval_seconds = 5
 
         [moderation]
         log_channel_id = 0
