@@ -52,7 +52,14 @@ if not os.path.exists("config.toml"):
     print("Default config.toml created. Please edit it with your settings and restart the bot.")
     exit(1)
 
-config = tomli.load(open("config.toml", "rb"))
+def load_config():
+    try:
+        return tomli.load(open("config.toml", "rb"))
+    except Exception as e:
+        print(f"Failed to load config.toml: {e}")
+        exit(1)
+
+config = load_config()
 
 DISCORD_TOKEN = config["bot"]["discord_token"]
 VT_API_KEY = config["virustotal"]["api_key"]
@@ -60,6 +67,7 @@ RESPONSIBLE_MODERATOR_ID = config["bot"]["responsible_moderator_id"]
 
 LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
 SILLY_MODE = int(config["bot"]["silly_mode"])
+SCAN_SLEEP = config["virustotal"]["scan_sleep"]
 SCAN_INTERVAL = config["virustotal"]["scan_interval_seconds"]
 MAX_MALICIOUS_MESSAGES = config["moderation"]["max_violations"]
 VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minutes"])
@@ -117,9 +125,11 @@ tree = app_commands.CommandTree(client)
 
 whitelist_group = app_commands.Group(name="whitelist", description="Manage the whitelist")
 blacklist_group = app_commands.Group(name="blacklist", description="Manage the blacklist")
+config_group = app_commands.Group(name="config", description="Manage the bot configuration")
 
 tree.add_command(whitelist_group)
 tree.add_command(blacklist_group)
+tree.add_command(config_group)
 
 def vt_url_id(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
@@ -171,7 +181,7 @@ async def virustotal_lookup(session, url):
 
             raise Exception(f"URL submission failed for {url}: HTTP {resp.status}")
 
-    await asyncio.sleep(SCAN_INTERVAL)  #wait before requesting report
+    await asyncio.sleep(SCAN_SLEEP)  #wait before requesting report
 
     #fetch report using base64url-encoded url
     report_url = f"{scan_url}/{vt_url_id(url)}"
@@ -244,6 +254,12 @@ async def scan_worker():
 
         except Exception as e:
             logging.error(f"[Scan Worker Error] Failed to process {url}: {e}")
+            responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            if responsible_moderator:
+                await message.channel.send(
+                    f"{responsible_moderator.mention}, I failed to process a link!\n"
+                    f"[Scan Worker Error] Error: {e}"
+                )
         finally:
             scan_queue.task_done()
             #print(f"Finished processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
@@ -279,9 +295,11 @@ async def vt_worker():
                         await check_user_violations(message.author, message.channel)
                     except discord.Forbidden:
                         logging.warning(f"Failed to delete message from {message.author} ({message.author.id}) in #{message.channel} due to missing permissions.")
-                        await message.channel.send(
-                            f"I tried to delete a message with a malicious link, but I don't have permissions!"
-                        )
+                        responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                        if responsible_moderator:
+                            await message.channel.send(
+                                f"I tried to delete a message with a malicious link but I don't have permissions, {responsible_moderator.mention}!"
+                            )
                         continue
 
                     else:
@@ -328,18 +346,17 @@ async def vt_worker():
             except Exception as e:
                 logging.error(f"[VT Worker Error] Failed to scan {url}: {e}")
                 print(f"Error scanning {url}: {e}")
-                #log_channel = client.get_channel(LOG_CHANNEL_ID)
-                #responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-                #if log_channel and responsible_mod:
-                    #await log_channel.send(
-                    #    f"{responsible_mod.mention}, I failed to scan a link!\n"
-                    #    f"[VT Worker Error] Error scanning `{url}`: {e})"
-                    #)
+                responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                if responsible_mod:
+                    await message.channel.send(
+                        f"{responsible_mod.mention}, I failed to scan a link!\n"
+                        f"[VT Worker Error] Error: {e})"
+                    )
                 #still pop on error to avoid locking queue
                 scans_in_progress.pop(url, None)
 
             finally:
-                await asyncio.sleep(SCAN_INTERVAL)
+                await asyncio.sleep(SCAN_INTERVAL) #rate limit to avoid hitting VT too fast
                 vt_queue.task_done()
 
 async def check_user_violations(user, message_channel):
@@ -357,21 +374,31 @@ async def check_user_violations(user, message_channel):
             await log_channel.send(
                 f"**User {user.mention} flagged for possible spam!**\n"
                 f"{len(user_violations[user.id])} malicious messages in the past {VIOLATION_WINDOW.total_seconds() // 60:.0f} minutes.\n"
+                f"User has been timed out for 20 minutes.\n"
                 f"Manual intervention is recommended."
             )
+        try:
+            await user.timeout(timedelta(minutes=20), reason="Exceeded malicious message threshold")
+            await message_channel.send(
+                f"{user.mention}, you have been timed out for 20 minutes for posting multiple malicious links in a short period of time."
+            )
+        except discord.Forbidden:
+            #ping responsible moderator if we can't timeout
+            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            logging.warning(f"Failed to timeout user {user} due to missing permissions.")
+            if responsible_mod:
+                await message_channel.send(
+                    f"I tried to timeout someone for posting multiple malicious links but I don't have permission, {responsible_mod.mention}!"
+                )
+        
         logging.info(f"User {user} exceeded malicious message threshold.")
-
-
-
-
-
 
 #----------------------- bot stuff -----------------------
 @client.event
 async def on_ready():
     await tree.sync()
     print(f"Logged in as {client.user}")
-    logging.info(f"Bot started at {datetime.now(timezone.utc).isoformat()}")
+    logging.info(f"Bot started.")
     client.loop.create_task(scan_worker())
     client.loop.create_task(vt_worker())
 
@@ -486,6 +513,36 @@ async def blacklist_reload(interaction: discord.Interaction):
     global BLACKLIST
     BLACKLIST = load_json_list(BLACKLIST_PATH)
     await interaction.response.send_message("Blacklist reloaded from file.")
+
+@config_group.command(name="show", description="Show the current bot configuration")
+async def config_show(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    try:
+        config_text = (
+            "**Current Configuration:**\n"
+            f"SCAN_SLEEP: {SCAN_SLEEP}s\n"
+            f"SCAN_INTERVAL: {SCAN_INTERVAL}s\n"
+            f"RESPONSIBLE_MODERATOR_ID: `{RESPONSIBLE_MODERATOR_ID}`\n"
+            f"MAX_MALICIOUS_MESSAGES: {MAX_MALICIOUS_MESSAGES}\n"
+            f"VIOLATION_WINDOW: {VIOLATION_WINDOW.total_seconds() // 60:.0f} minutes\n"
+            f"LOG_CHANNEL_ID: `{LOG_CHANNEL_ID}`\n"
+        )
+        await interaction.response.send_message(config_text)
+    except Exception as e:
+        await interaction.response.send_message(f"Failed to show config: {e}", ephemeral=True)
+
+@config_group.command(name="reload", description="Reload the bot configuration from file")
+async def config_reload(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    global config
+    config = load_config()
+    await interaction.response.send_message("Configuration reloaded from file.")
 
 #----------------------- message handling -----------------------
 

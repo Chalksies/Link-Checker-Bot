@@ -1,3 +1,4 @@
+.botvenv/
 listmigrator.py
 logs/
 *.toml
