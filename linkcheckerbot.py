@@ -93,7 +93,8 @@ VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minu
 ALLOWLIST_PATH = config["structure"]["allowlist_path"]
 DENYLIST_PATH = config["structure"]["denylist_path"]
 SHORTENER_PATH = config["structure"]["shortener_list_path"]
-LOGGING_PATH = config["structure"]["logging_path"]
+LOGGING_PATH = config["structure"]["logging_dir"]
+MAX_LOG_LINES = config["structure"]["max_log_lines"]
 VIOLATION_LOG_PATH = config["structure"]["violation_path"]
 
 def save_config():
@@ -126,13 +127,51 @@ SHORTENERS = load_json_list(SHORTENER_PATH, default =DEFAULT_SHORTENERS)
 #link regex
 URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
 
-#setup file logger
-os.makedirs("logs", exist_ok=True)
-logging.basicConfig(
-    filename=f"{LOGGING_PATH}",
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
+latest_log_path = os.path.join(LOGGING_PATH, "latest.log")
+
+log_formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s")
+log_file_handler = logging.FileHandler(latest_log_path, mode='a', encoding='utf-8')
+log_file_handler.setFormatter(log_formatter)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+logger.addHandler(log_file_handler)
+
+if os.path.exists(latest_log_path):
+    with open(latest_log_path, "r", encoding="utf-8") as f:
+        log_line_count = sum(1 for _ in f)
+else:
+    log_line_count = 0
+
+def log_and_rotate(message: str, level=logging.INFO):
+    global log_line_count, log_file_handler
+
+    logger.log(level, message)
+    log_line_count += 1
+
+    if log_line_count >= MAX_LOG_LINES:
+        #rotate
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        rotated_path = os.path.join(LOGGING_PATH, f"{timestamp}.log")
+
+        log_file_handler.close()
+        os.rename(latest_log_path, rotated_path)
+
+        #start fresh log
+        new_handler = logging.FileHandler(latest_log_path, mode='a', encoding='utf-8')
+        new_handler.setFormatter(log_formatter)
+
+        logger.removeHandler(log_file_handler)
+        logger.addHandler(new_handler)
+        log_file_handler = new_handler
+        log_line_count = 0
+
+def log_info(msg): log_and_rotate(msg )
+def log_warning(msg): log_and_rotate(msg, logging.WARNING)
+def log_error(msg): log_and_rotate(msg, logging.ERROR)
 
 #queue to control rate-limited api use
 vt_queue = asyncio.Queue()
@@ -201,7 +240,7 @@ async def resolve_short_url(message, url: str) -> str:
                 return str(resp.url)
 
     except Exception as e:
-        logging.info(f"Failed to resolve shortener: {e}")
+        log_info(f"Failed to resolve shortener: {e}",  )
         print(f"Failed to resolve shortener: {e}")
         responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
         if responsible_mod:
@@ -236,7 +275,7 @@ def log_violation(user: discord.User, url: str):
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        logging.error(f"Failed to log violation: {e}")
+        log_error(f"Failed to log violation: {e}")
 
 
 #virustotal api interaction
@@ -248,7 +287,7 @@ async def virustotal_lookup(session, url, channel):
     async with session.post(scan_url, headers=headers, data={"url": url}) as resp:
         if resp.status != 200:
             print(f"URL submission failed for {url}: HTTP {resp.status}")
-            logging.info(f"URL submission failed for {url}: HTTP {resp.status}")
+            log_info(f"URL submission failed for {url}: HTTP {resp.status}",  )
             log_channel = client.get_channel(LOG_CHANNEL_ID)
             responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
             if log_channel and responsible_mod:
@@ -297,14 +336,14 @@ async def scan_worker():
         try:
             if message.author.guild_permissions.manage_messages:
                 #if the user has manage_messages permission, skip checks
-                logging.info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
+                log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 continue
 
             if domain in SHORTENERS:
                 resolved_url = await resolve_short_url(message, url)
                 if resolved_url != url:
-                    logging.info(f"Expanded short URL: {url} → {resolved_url}")
+                    log_info(f"Expanded short URL: {url} → {resolved_url}" )
                     print(f"Expanded short URL: {url} → {resolved_url}")
                 url = resolved_url
                 domain = extract_domain(url)
@@ -312,7 +351,7 @@ async def scan_worker():
             #denylist check
             if domain in DENYLIST:
                 await message.delete()
-                logging.info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
+                log_info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
                 await message.channel.send("A denylisted link was removed.")
                 log_violation(message.author, url)
                 log_channel = client.get_channel(LOG_CHANNEL_ID)
@@ -326,25 +365,25 @@ async def scan_worker():
 
             #allowlist check (skip)
             if domain in ALLOWLIST:
-                logging.info(f"Skipping allowlisted link: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+                log_info(f"Skipping allowlisted link: {url} from {message.author} ({message.author.id}) in #{message.channel}")
                 print(f"Skipping allowlisted link: {url}")
                 continue
 
             #queue for vt
             if url in scans_in_progress:
                 scans_in_progress[url].append(message)
-                logging.info(f"Deferred message from {message.author} ({message.author.id}) with URL: {url}")
+                log_info(f"Deferred message from {message.author} ({message.author.id}) with URL: {url}" )
                 print(f"Deferred message from {message.author} ({message.author.id}) with URL: {url}")
                 continue
             else:
                 scans_in_progress[url] = []
                 await vt_queue.put((message, url))
-                logging.info(f"Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+                log_info(f"Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
                 print(f"Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
                 last_scanned_urls.add(url)
 
         except Exception as e:
-            logging.error(f"[Scan Worker Error] Failed to process {url}: {e}")
+            log_error(f"[Scan Worker Error] Failed to process {url}: {e}")
             responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
             if responsible_moderator:
                 await message.channel.send(
@@ -377,7 +416,7 @@ async def vt_worker():
                     domain = extract_domain(url)
                     if domain not in DENYLIST:
                         DENYLIST.add(domain)
-                        logging.info(f"Adding {domain} to denylist due to malicious link: {url}")
+                        log_info(f"Adding {domain} to denylist due to malicious link: {url}")
                         print(f"Adding {domain} to denylist due to malicious link: {url}")
                     save_json_list(DENYLIST_PATH, DENYLIST)
 
@@ -387,7 +426,7 @@ async def vt_worker():
                         await message.delete
                         await check_user_violations(message.author, message.channel)
                     except discord.Forbidden:
-                        logging.warning(f"Failed to delete message from {message.author} ({message.author.id}) in #{message.channel} due to missing permissions.")
+                        log_warning(f"Failed to delete message from {message.author} ({message.author.id}) in #{message.channel} due to missing permissions.")
                         responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
                         if responsible_moderator:
                             await message.channel.send(
@@ -400,7 +439,7 @@ async def vt_worker():
                             f"Malicious link from {message.author.mention} was removed.\n"
                             f"({detections} detections on VirusTotal)"
                         )
-                        logging.info(f"[MALICIOUS] Deleted: {url} from {message.author} ({message.author.id})")
+                        log_info(f"[MALICIOUS] Deleted: {url} from {message.author} ({message.author.id})")
                         if log_channel:
                             await log_channel.send(
                                 f"`{url}` flagged as malicious by VirusTotal ({detections} detections).\n"
@@ -421,7 +460,7 @@ async def vt_worker():
                             await check_user_violations(message.author, message.channel)
                             delete_count += 1
                         except Exception as e:
-                            logging.warning(f"Failed to delete deferred message: {e}")
+                            log_warning(f"Failed to delete deferred message: {e}")
 
                     #log result to moderation channel
                     if log_channel:
@@ -435,10 +474,10 @@ async def vt_worker():
                 else:
                     #safe link
                     print(f"Clean: {url}")
-                    logging.info(f"[CLEAN] {url} had no detections.")
+                    log_info(f"[CLEAN] {url} had no detections.")
 
             except Exception as e:
-                logging.error(f"[VT Worker Error] Failed to scan {url}: {e}")
+                log_error(f"[VT Worker Error] Failed to scan {url}: {e}")
                 print(f"Error scanning {url}: {e}")
                 responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
                 if responsible_mod:
@@ -479,20 +518,21 @@ async def check_user_violations(user, message_channel):
         except discord.Forbidden:
             #ping responsible moderator if we can't timeout
             responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-            logging.warning(f"Failed to timeout user {user} due to missing permissions.")
+            log_warning(f"Failed to timeout user {user} due to missing permissions.")
             if responsible_mod:
                 await message_channel.send(
                     f"I tried to timeout someone for posting multiple malicious links but I don't have permission, {responsible_mod.mention}!"
                 )
         
-        logging.info(f"User {user} exceeded malicious message threshold.")
+        log_info(f"User {user} exceeded malicious message threshold.")
 
 #----------------------- bot stuff -----------------------
 @client.event
 async def on_ready():
     await tree.sync()
     print(f"Logged in as {client.user}")
-    logging.info(f"Bot started.")
+    log_info(f"Bot started." )
+    print(f"Current log size: {log_line_count} lines")
     client.loop.create_task(scan_worker())
     client.loop.create_task(vt_worker())
 
@@ -830,7 +870,7 @@ async def violations_show(interaction: discord.Interaction, user: discord.User):
         await interaction.response.send_message(embed=embed)
 
     except Exception as e:
-        logging.error(f"Failed to show violations: {e}")
+        log_error(f"Failed to show violations: {e}")
         await interaction.response.send_message("Error loading violations log.", ephemeral=True)
 
     
@@ -929,9 +969,6 @@ async def help_command(interaction: discord.Interaction):
     )
 
     await interaction.response.send_message(embed=embed)
-
-        
-    
 
 #----------------------- message handling -----------------------
 
