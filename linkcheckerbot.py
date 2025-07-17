@@ -364,7 +364,7 @@ async def vt_worker():
 
             try:
                 #virustotal scan
-                report = await virustotal_lookup(session, url)
+                report = await virustotal_lookup(session, url, message.channel)
                 stats = report["data"]["attributes"]["last_analysis_stats"]
                 detections = stats.get("malicious", 0)
 
