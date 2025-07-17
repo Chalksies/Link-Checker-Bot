@@ -148,16 +148,18 @@ user_violations = defaultdict(list)  # track user violations
 
 tree = app_commands.CommandTree(client)
 
-
 allowlist_group = app_commands.Group(name="allowlist", description="Manage the allowlist")
 denylist_group = app_commands.Group(name="denylist", description="Manage the denylist")
 shortener_group = app_commands.Group(name="shortenerlist", description="Manage the shortener list")
 config_group = app_commands.Group(name="config", description="Manage the bot configuration")
+violations_group = app_commands.Group(name="violations", description="Manage and view link violations")
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
 tree.add_command(shortener_group)
 tree.add_command(config_group)
+tree.add_command(violations_group)
+
 
 def vt_url_id(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
@@ -212,10 +214,9 @@ async def resolve_short_url(message, url: str) -> str:
 
 def log_violation(user: discord.User, url: str):
     entry = {
-        "user_id": user.id,
         "username": str(user),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "url": url
+        "url": url,
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
     try:
@@ -223,15 +224,20 @@ def log_violation(user: discord.User, url: str):
             with open(VIOLATION_LOG_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
         else:
-            data = []
+            data = {}
 
-        data.append(entry)
+        user_id = str(user.id)
+        if user_id not in data:
+            data[user_id] = []
+
+        data[user_id].append(entry)
 
         with open(VIOLATION_LOG_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     except Exception as e:
         logging.error(f"Failed to log violation: {e}")
+
 
 #virustotal api interaction
 async def virustotal_lookup(session, url, channel):
@@ -781,6 +787,52 @@ async def config_edit(interaction: discord.Interaction, key: str, value: str):
     except Exception as e:
         await interaction.response.send_message(f"Failed to save config to file: {e}", ephemeral=True)
         return
+    
+@violations_group.command(name="show", description="Show all violations for a user")
+@app_commands.describe(user="The user to view violations for")
+async def violations_show(interaction: discord.Interaction, user: discord.User):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    try:
+        if not os.path.exists(VIOLATION_LOG_PATH):
+            await interaction.response.send_message("No violations has been recorded yet.")
+            return
+        
+        with open(VIOLATION_LOG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        user_id = str(user.id)
+        violations = data.get(user_id, [])
+
+        if not violations:
+            await interaction.response.send_message(f"No violations recorded for {user.mention}.")
+            return
+
+        # Build response
+        embed = discord.Embed(
+            title=f"Violations for {user}",
+            description=f"Total: {len(violations)}",
+            color=discord.Color.red()
+        )
+
+        for v in violations[:10]:  # first 10 entries
+            embed.add_field(
+                name=v["timestamp"],
+                value=f"[{v['url']}]({v['url']})",
+                inline=False
+            )
+
+        if len(violations) > 10:
+            embed.set_footer(text=f"Showing first 10 of {len(violations)} violations")
+
+        await interaction.response.send_message(embed=embed)
+
+    except Exception as e:
+        logging.error(f"Failed to show violations: {e}")
+        await interaction.response.send_message("Error loading violations log.", ephemeral=True)
+
     
 @tree.command(name="ping", description="Show bot latency and response time")
 async def ping_command(interaction: discord.Interaction):
