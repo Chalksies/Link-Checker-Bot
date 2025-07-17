@@ -132,24 +132,6 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
-async def resolve_short_url(message, url: str) -> str:
-    try:
-        parsed = extract_domain(url)
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, allow_redirects=True, timeout=5) as resp:
-                return str(resp.url)
-
-    except Exception as e:
-        logging.info(f"Failed to resolve shortener: {e}")
-        print(f"Failed to resolve shortener: {e}")
-        responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-        if responsible_mod:
-            await message.channel.send(
-                f"{responsible_mod.mention}, I failed to resolve a shortener: {e}"
-            )
-        pass
-    return url
-
 #queue to control rate-limited api use
 vt_queue = asyncio.Queue()
 scan_queue = asyncio.Queue()
@@ -207,6 +189,24 @@ def extract_all_urls(message) -> set:
 
     return {url.lower().strip() for url in urls}
 
+async def resolve_short_url(message, url: str) -> str:
+    try:
+        parsed = extract_domain(url)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, allow_redirects=True, timeout=5) as resp:
+                return str(resp.url)
+
+    except Exception as e:
+        logging.info(f"Failed to resolve shortener: {e}")
+        print(f"Failed to resolve shortener: {e}")
+        responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+        if responsible_mod:
+            await message.channel.send(
+                f"{responsible_mod.mention}, I failed to resolve a shortener: {e}"
+            )
+        pass
+    return url
+
 #virustotal api interaction
 async def virustotal_lookup(session, url, channel):
     scan_url = "https://www.virustotal.com/api/v3/urls"
@@ -260,13 +260,6 @@ async def scan_worker():
     while True:
         message, url = await scan_queue.get()
         domain = extract_domain(url)
-        if domain in SHORTENERS:
-            resolved_url = await resolve_short_url(message, url)
-            if resolved_url != url:
-                logging.info(f"Expanded short URL: {url} → {resolved_url}")
-                print(f"Expanded short URL: {url} → {resolved_url}")
-            url = resolved_url
-        
         #print(f"Processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
 
         try:
@@ -276,6 +269,14 @@ async def scan_worker():
                 print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 continue
 
+            if domain in SHORTENERS:
+                resolved_url = await resolve_short_url(message, url)
+                if resolved_url != url:
+                    logging.info(f"Expanded short URL: {url} → {resolved_url}")
+                    print(f"Expanded short URL: {url} → {resolved_url}")
+                url = resolved_url
+                domain = extract_domain(url)
+        
             #denylist check
             if domain in DENYLIST:
                 await message.delete()
@@ -784,23 +785,23 @@ async def help_command(interaction: discord.Interaction):
         )
 
         embed.add_field(
-            name="Whitelist Commands",
+            name="Allowlist Commands",
             value=(
-                "• `/whitelist add <domain>`\n"
-                "• `/whitelist remove <domain>`\n"
-                "• `/whitelist show`\n"
-                "• `/whitelist reload`"
+                "• `/allowlist add <domain>`\n"
+                "• `/allowlist remove <domain>`\n"
+                "• `/allowlist show`\n"
+                "• `/allowlist reload`"
             ),
             inline=False
         )
 
         embed.add_field(
-            name="Blacklist Commands",
+            name="Denylist Commands",
             value=(
-                "• `/blacklist add <domain>`\n"
-                "• `/blacklist remove <domain>`\n"
-                "• `/blacklist show`\n"
-                "• `/blacklist reload`"
+                "• `/denylist add <domain>`\n"
+                "• `/denylist remove <domain>`\n"
+                "• `/denylist show`\n"
+                "• `/denylist reload`"
             ),
             inline=False
         )
@@ -821,7 +822,7 @@ async def help_command(interaction: discord.Interaction):
         value=(
             "• Links in sent messages, their embeds and edited messages are scanned\n"
             "• Shortened URLs (e.g. `bit.ly`) are automatically resolved\n"
-            "• Malicious links are blacklisted\n"
+            "• Malicious links are denylisted\n"
             "• Users spamming bad links are timed out and logged"
         ),
         inline=False
