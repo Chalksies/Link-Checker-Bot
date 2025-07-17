@@ -41,8 +41,9 @@ DEFAULT_SHORTENERS = {
 DEFAULT_CONFIG = """
         [bot]
         discord_token = "YOUR_DISCORD_TOKEN"
-        silly_mode = 0
-        resposible_moderator_id =             #optional, user ID of the responsible moderator for the bot
+        silly_mode = false
+        debug_mode = false
+        resposible_moderator_id = 0            #optional, user ID of the responsible moderator for the bot
 
         [virustotal]
         api_key = "YOUR_VIRUSTOTAL_API_KEY"
@@ -50,7 +51,7 @@ DEFAULT_CONFIG = """
         scan_interval_seconds = 5
 
         [moderation]
-        log_channel_id = 0
+        log_channel_id = 0                 #channel ID for the bot to log its actions
         max_violations = 3
         violation_window_minutes = 2
 
@@ -59,6 +60,7 @@ DEFAULT_CONFIG = """
         denylist_path = "denylist.json"
         shortener_list_path = "shortener.json"
         logging_path = "logs"
+        max_log_lines = 5000
         violation_path = "violations.json"
         """
 
@@ -82,6 +84,7 @@ config = load_config()
 DISCORD_TOKEN = config["bot"]["discord_token"]
 VT_API_KEY = config["virustotal"]["api_key"]
 RESPONSIBLE_MODERATOR_ID = config["bot"]["responsible_moderator_id"]
+DEBUG_MODE = config["bot"]["debug_mode"]
 
 LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
 SILLY_MODE = int(config["bot"]["silly_mode"])
@@ -192,13 +195,14 @@ denylist_group = app_commands.Group(name="denylist", description="Manage the den
 shortener_group = app_commands.Group(name="shortenerlist", description="Manage the shortener list")
 config_group = app_commands.Group(name="config", description="Manage the bot configuration")
 violations_group = app_commands.Group(name="violations", description="Manage and view link violations")
+debug_group = app_commands.Group(name="debug", description="Debugging tools")
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
 tree.add_command(shortener_group)
 tree.add_command(config_group)
 tree.add_command(violations_group)
-
+tree.add_command(debug_group)
 
 def vt_url_id(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
@@ -828,6 +832,19 @@ async def config_edit(interaction: discord.Interaction, key: str, value: str):
         await interaction.response.send_message(f"Failed to save config to file: {e}", ephemeral=True)
         return
     
+@config_group.command(name="toggle_debug", description="Toggle debug mode")
+async def config_toggle_debug(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("Permission denied.", ephemeral=True)
+        return
+
+    global DEBUG_MODE
+    DEBUG_MODE = not DEBUG_MODE
+    config["bot"]["debug_mode"] = DEBUG_MODE
+    save_config()
+
+    await interaction.response.send_message(f"Debug mode is now **{'enabled' if DEBUG_MODE else 'disabled'}**.")
+    
 @violations_group.command(name="show", description="Show all violations for a user")
 @app_commands.describe(user="The user to view violations for")
 async def violations_show(interaction: discord.Interaction, user: discord.User):
@@ -873,6 +890,31 @@ async def violations_show(interaction: discord.Interaction, user: discord.User):
         log_error(f"Failed to show violations: {e}")
         await interaction.response.send_message("Error loading violations log.", ephemeral=True)
 
+@debug_group.command(name="throw_error", description="Manually raise a test exception")
+async def debug_throw_error(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+    
+    if not DEBUG_MODE:
+        await interaction.response.send_message("Debug mode is disabled.", ephemeral=True)
+        return
+
+    await interaction.response.send_message("An error was thrown into logs.")
+    raise RuntimeError("This is a manually thrown test error.")
+
+@debug_group.command(name="throw_warning", description="Manually trigger a warning log")
+async def debug_throw_warning(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+    
+    if not DEBUG_MODE:
+        await interaction.response.send_message("Debug mode is disabled.", ephemeral=True)
+        return
+
+    log_warning(f"Debug warning triggered by {interaction.user} ({interaction.user.id})")
+    await interaction.response.send_message("A warning was thrown into logs.")
     
 @tree.command(name="ping", description="Show bot latency and response time")
 async def ping_command(interaction: discord.Interaction):
