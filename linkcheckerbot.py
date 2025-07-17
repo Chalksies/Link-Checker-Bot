@@ -59,6 +59,7 @@ DEFAULT_CONFIG = """
         denylist_path = "denylist.json"
         shortener_list_path = "shortener.json"
         logging_path = "logs"
+        violation_path = "violations.json"
         """
 
 CONFIG_PATH = "config.toml"
@@ -93,6 +94,7 @@ ALLOWLIST_PATH = config["structure"]["allowlist_path"]
 DENYLIST_PATH = config["structure"]["denylist_path"]
 SHORTENER_PATH = config["structure"]["shortener_list_path"]
 LOGGING_PATH = config["structure"]["logging_path"]
+VIOLATION_LOG_PATH = config["structure"]["violation_path"]
 
 def save_config():
     with open(CONFIG_PATH, "wb") as f:
@@ -136,8 +138,8 @@ logging.basicConfig(
 vt_queue = asyncio.Queue()
 scan_queue = asyncio.Queue()
 
-last_scanned_urls = set()
-scans_in_progress = {} 
+last_scanned_urls: set[str] = set()
+scans_in_progress: dict[str, list[discord.Message]] = {}
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -206,6 +208,30 @@ async def resolve_short_url(message, url: str) -> str:
             )
         pass
     return url
+
+
+def log_violation(user: discord.User, url: str):
+    entry = {
+        "user_id": user.id,
+        "username": str(user),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "url": url
+    }
+
+    try:
+        if os.path.exists(VIOLATION_LOG_PATH):
+            with open(VIOLATION_LOG_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            data = []
+
+        data.append(entry)
+
+        with open(VIOLATION_LOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    except Exception as e:
+        logging.error(f"Failed to log violation: {e}")
 
 #virustotal api interaction
 async def virustotal_lookup(session, url, channel):
@@ -282,6 +308,7 @@ async def scan_worker():
                 await message.delete()
                 logging.info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
                 await message.channel.send("A denylisted link was removed.")
+                log_violation(message.author, url)
                 log_channel = client.get_channel(LOG_CHANNEL_ID)
                 if log_channel:
                     await log_channel.send(
@@ -298,9 +325,17 @@ async def scan_worker():
                 continue
 
             #queue for vt
-            await vt_queue.put((message, url, message.channel))
-            print(f"{datetime.now(timezone.utc).isoformat()} - Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
-            last_scanned_urls.add(url)
+            if url in scans_in_progress:
+                scans_in_progress[url].append(message)
+                logging.info(f"Deferred message from {message.author} ({message.author.id}) with URL: {url}")
+                print(f"Deferred message from {message.author} ({message.author.id}) with URL: {url}")
+                continue
+            else:
+                scans_in_progress[url] = []
+                await vt_queue.put((message, url, message.channel))
+                logging.info("Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+                print("Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+                last_scanned_urls.add(url)
 
         except Exception as e:
             logging.error(f"[Scan Worker Error] Failed to process {url}: {e}")
@@ -340,6 +375,8 @@ async def vt_worker():
                         print(f"Adding {domain} to denylist due to malicious link: {url}")
                     save_json_list(DENYLIST_PATH, DENYLIST)
 
+                    log_violation(message.author, url)
+
                     try:
                         await message.delete
                         await check_user_violations(message.author, message.channel)
@@ -371,6 +408,7 @@ async def vt_worker():
                     for msg in deferred_messages:
                         try:
                             await msg.delete()
+                            log_violation(msg.author, url)
                             await msg.channel.send(
                                 f"Malicious link from {msg.author.mention} was removed based on recent scan."
                             )
@@ -664,8 +702,8 @@ async def config_show(interaction: discord.Interaction):
         color=discord.Color.gold()
     )
 
-    embed.add_field(name="SCAN_INTERVAL", value=f"{SCAN_INTERVAL} seconds", inline=False)
-    embed.add_field(name="SCAN_SLEEP", value=f"{SCAN_SLEEP} per minute", inline=False)
+    embed.add_field(name="SCAN_SLEEP", value=f"{SCAN_SLEEP}s", inline=False)
+    embed.add_field(name="SCAN_INTERVAL", value=f"{SCAN_INTERVAL}s", inline=False)
     embed.add_field(name="MAX_MALICIOUS_MESSAGES", value=str(MAX_MALICIOUS_MESSAGES), inline=False)
     embed.add_field(name="VIOLATION_WINDOW", value=f"{int(VIOLATION_WINDOW.total_seconds() // 60)} minutes", inline=False)
     embed.add_field(name="LOG_CHANNEL_ID", value=f"`{LOG_CHANNEL_ID}`", inline=False)
@@ -684,11 +722,21 @@ async def config_reload(interaction: discord.Interaction):
     config = load_config()
     await interaction.response.send_message("Configuration reloaded from file.")
 
+CONFIG_KEYS = ["SCAN_SLEEP", "SCAN_INTERVAL", "VT_RATE_LIMIT", "MAX_MALICIOUS_MESSAGES", "VIOLATION_WINDOW", "LOG_CHANNEL_ID", "RESPONSIBLE_MODERATOR_ID"]
+
+async def config_key_autocomplete(interaction: discord.Interaction, current: str):
+    return [
+        app_commands.Choice(name=key, value=key)
+        for key in CONFIG_KEYS
+        if current.lower() in key.lower()
+    ][:25]
+
 @config_group.command(name="edit", description="Edit a config option (in memory)")
 @app_commands.describe(
     key="Name of the config key (/help for details)",
     value="New value for the config key"
 )
+@app_commands.autocomplete(key=config_key_autocomplete)
 async def config_edit(interaction: discord.Interaction, key: str, value: str):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
@@ -704,10 +752,6 @@ async def config_edit(interaction: discord.Interaction, key: str, value: str):
         global SCAN_INTERVAL
         SCAN_INTERVAL = int(value)
         config["virustotal"]["scan_interval_seconds"] = SCAN_INTERVAL
-    elif key == "responsible_moderator_id": 
-        global RESPONSIBLE_MODERATOR_ID
-        RESPONSIBLE_MODERATOR_ID = int(value)
-        config["bot"]["responsible_moderator_id"] = RESPONSIBLE_MODERATOR_ID
     elif key == "max_malicious_messages":
         global MAX_MALICIOUS_MESSAGES
         MAX_MALICIOUS_MESSAGES = int(value)
@@ -720,10 +764,14 @@ async def config_edit(interaction: discord.Interaction, key: str, value: str):
         global LOG_CHANNEL_ID
         LOG_CHANNEL_ID = int(value)
         config["moderation"]["log_channel_id"] = LOG_CHANNEL_ID
+    elif key == "responsible_moderator_id": 
+        global RESPONSIBLE_MODERATOR_ID
+        RESPONSIBLE_MODERATOR_ID = int(value)
+        config["bot"]["responsible_moderator_id"] = RESPONSIBLE_MODERATOR_ID
     else:
         await interaction.response.send_message(
             f"Unknown config key: `{key}`\n"
-            f"Available keys are: scan_sleep, scan_interval, responsible_moderator_id, max_malicious_messages, violation_window_minutes, log_channel_id", 
+            f"Available keys are: scan_sleep, scan_interval, max_malicious_messages, violation_window_minutes, log_channel_id, responsible_moderator_id", 
             ephemeral=True)
         return
     
