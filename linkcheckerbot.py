@@ -797,7 +797,7 @@ async def violations_show(interaction: discord.Interaction, user: discord.User):
 
     try:
         if not os.path.exists(VIOLATION_LOG_PATH):
-            await interaction.response.send_message("No violations has been recorded yet.")
+            await interaction.response.send_message("No violations have been recorded yet.")
             return
         
         with open(VIOLATION_LOG_PATH, "r", encoding="utf-8") as f:
