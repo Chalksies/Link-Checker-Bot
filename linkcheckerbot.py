@@ -234,7 +234,7 @@ def extract_all_urls(message) -> set:
             if part:
                 urls.update(re.findall(URL_REGEX, part))
 
-    return {url.lower().strip() for url in urls}
+    return {normalize_url(url) for url in urls}
 
 async def resolve_short_url(message, url: str) -> str:
     try:
@@ -253,6 +253,37 @@ async def resolve_short_url(message, url: str) -> str:
             )
         pass
     return url
+
+from urllib.parse import urlparse, urlunparse
+
+def normalize_url(raw_url: str) -> str:
+    try:
+        parsed = urlparse(raw_url.strip().lower())
+
+        #remove default ports
+        netloc = parsed.hostname or ""
+        if parsed.port:
+            netloc += f":{parsed.port}"
+
+        #remove trailing slash only if path is `/` or empty
+        path = parsed.path
+        if path == "/":
+            path = ""
+
+        #rebuild the normalized url
+        normalized = urlunparse((
+            parsed.scheme,
+            netloc,
+            path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment
+        ))
+
+        return normalized
+    except Exception:
+        return raw_url.strip().lower()
+
 
 
 def log_violation(user: discord.User, url: str):
@@ -547,7 +578,7 @@ async def allowlist_add(interaction: discord.Interaction, domain: str):
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    domain = domain.lower().strip()
+    domain = normalize_url(domain)
     if domain in ALLOWLIST:
         await interaction.response.send_message(f"This domain is already on the allowlist.")
     else:
@@ -562,7 +593,7 @@ async def allowlist_remove(interaction: discord.Interaction, domain: str):
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    domain = domain.lower().strip()
+    domain = normalize_url(domain)
     if domain in ALLOWLIST:
         ALLOWLIST.remove(domain)
         save_json_list(ALLOWLIST_PATH, ALLOWLIST)
@@ -614,7 +645,7 @@ async def denylist_add(interaction: discord.Interaction, domain: str):
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    domain = domain.lower().strip()
+    domain = normalize_url(domain)
     if domain in DENYLIST:
         await interaction.response.send_message(f"This domain is already in the denylist.") 
     else:
@@ -629,7 +660,7 @@ async def denylist_remove(interaction: discord.Interaction, domain: str):
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    domain = domain.lower().strip()
+    domain = normalize_url(domain)
     if domain in DENYLIST:
         DENYLIST.remove(domain)
         save_json_list(DENYLIST_PATH, DENYLIST)
@@ -681,7 +712,7 @@ async def shortenerlist_add(interaction: discord.Interaction, domain: str):
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    domain = domain.lower().strip()
+    domain = domain = normalize_url(domain)
     if domain in SHORTENERS:
         await interaction.response.send_message(f"This domain is already on the shortener list.")
     else:
@@ -696,7 +727,7 @@ async def shortenerlist_remove(interaction: discord.Interaction, domain: str):
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    domain = domain.lower().strip()
+    domain = domain = normalize_url(domain)
     if domain in SHORTENERS:
         SHORTENERS.remove(domain)
         save_json_list(SHORTENER_PATH, SHORTENERS)
@@ -792,7 +823,7 @@ async def config_edit(interaction: discord.Interaction, key: str, value: str):
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
     
-    key = key.lower().strip()
+    key = normalize_url(key)
 
     if key == "scan_sleep":
         global SCAN_SLEEP
@@ -923,7 +954,7 @@ async def ping_command(interaction: discord.Interaction):
     await interaction.response.defer()
     before = discord.utils.utcnow()
 
-    # The I/O call that actually touches Discord
+    #the io call that actually touches discord
     await interaction.followup.send("Measuring...")  # throwaway message
 
     after = discord.utils.utcnow()
@@ -936,7 +967,7 @@ async def ping_command(interaction: discord.Interaction):
     embed.add_field(name="Heartbeat Latency", value=f"{heartbeat}ms", inline=True)
     embed.add_field(name="Roundtrip Latency", value=f"{roundtrip}ms", inline=True)
 
-    # Update the message with real data
+    #update the message with real data
     await interaction.edit_original_response(content=None, embed=embed)
 
 @tree.command(name="help", description="Show help and usage info")
