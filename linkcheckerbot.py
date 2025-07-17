@@ -339,8 +339,8 @@ async def scan_worker():
             else:
                 scans_in_progress[url] = []
                 await vt_queue.put((message, url))
-                logging.info("Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
-                print("Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+                logging.info(f"Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+                print(f"Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
                 last_scanned_urls.add(url)
 
         except Exception as e:
