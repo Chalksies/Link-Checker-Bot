@@ -46,7 +46,7 @@ DEFAULT_CONFIG = """
 
         [virustotal]
         api_key = "YOUR_VIRUSTOTAL_API_KEY"
-        scan_sleep = 10
+        scan_sleep = 15
         scan_interval_seconds = 5
 
         [moderation]
@@ -266,12 +266,12 @@ async def virustotal_lookup(session, url, channel):
     async with session.get(report_url, headers=headers) as resp:
         if resp.status != 200:
             print(f"Report fetch failed for {url}: HTTP {resp.status}")
-            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-            if responsible_mod:
-                await channel.send(
-                    f"{responsible_mod.mention}, I failed to scan a link!\n"
-                    f"(Report fetch failed: HTTP {resp.status})"
-                )
+            #responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            #if responsible_mod:
+            #    await channel.send(
+            #       f"{responsible_mod.mention}, I failed to scan a link!\n"
+            #        f"(Report fetch failed: HTTP {resp.status})"
+            #   )
 
             raise Exception(f"Report fetch failed for {url}: HTTP {resp.status}")
         report = await resp.json()
