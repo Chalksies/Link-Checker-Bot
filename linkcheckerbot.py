@@ -338,7 +338,7 @@ async def scan_worker():
                 continue
             else:
                 scans_in_progress[url] = []
-                await vt_queue.put((message, url, message.channel))
+                await vt_queue.put((message, url))
                 logging.info("Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
                 print("Queued for VT: {url} from {message.author} ({message.author.id}) in #{message.channel}")
                 last_scanned_urls.add(url)
