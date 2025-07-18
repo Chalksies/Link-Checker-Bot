@@ -1015,9 +1015,20 @@ async def help_command(interaction: discord.Interaction):
                 "• `/config show`\n"
                 "• `/config edit`\n"
                 "• `/config reload`\n"
+                "• `/config toggle_debug`"
+
             ),
             inline=False
         )
+        if DEBUG_MODE:
+            embed.add_field(
+                name="Debugging Tools",
+                value=(
+                    "• `/debug throw_error`\n"
+                    "• `/debug throw_warning`"
+                ),
+                inline=False
+            )
 
         embed.add_field(
             name="Allowlist Commands",
