@@ -87,7 +87,7 @@ RESPONSIBLE_MODERATOR_ID = config["bot"]["responsible_moderator_id"]
 DEBUG_MODE = config["bot"]["debug_mode"]
 
 LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
-SILLY_MODE = int(config["bot"]["silly_mode"])
+SILLY_MODE = bool(config["bot"]["silly_mode"])
 SCAN_SLEEP = config["virustotal"]["scan_sleep"]
 SCAN_INTERVAL = config["virustotal"]["scan_interval_seconds"]
 MAX_MALICIOUS_MESSAGES = config["moderation"]["max_violations"]
@@ -412,9 +412,13 @@ async def scan_worker():
                 print(f"Skipping allowlisted link: {url}")
                 continue
 
-            embed_urls = extract_embed_urls(message)
-            for eurl in embed_urls:
-                await scan_queue.put((message, url))
+            #only scan embeds once
+            if not hasattr(message, "_embed_scanned"):
+                embed_urls = extract_embed_urls(message)
+                embed_urls.discard(url)
+                for eurl in embed_urls:
+                    await scan_queue.put((message, eurl))
+                message._embed_scanned = True
 
             #queue for vt
             if url in scans_in_progress:
@@ -734,7 +738,7 @@ async def shortenerlist_add(interaction: discord.Interaction, domain: str):
     else:
         SHORTENERS.add(domain)
         save_json_list(SHORTENER_PATH,SHORTENERS)
-        await interaction.response.send_message(f"Added `{domain}` to allowlist.")
+        await interaction.response.send_message(f"Added `{domain}` to shortener list.")
 
 @shortener_group.command(name="remove", description="Remove a domain from the shortener list")
 @app_commands.describe(domain="The domain to remove from the shortener list")
@@ -785,7 +789,7 @@ async def shortenerlist_reload(interaction: discord.Interaction):
         return
 
     global SHORTENERS
-    SHORTENERS = load_json_list(ALLOWLIST_PATH)
+    SHORTENERS = load_json_list(SHORTENER_PATH)
     await interaction.response.send_message("Shortener list reloaded from file.")
 
 @config_group.command(name="show", description="Display the currently loaded configuration")
@@ -819,7 +823,7 @@ async def config_reload(interaction: discord.Interaction):
     config = load_config()
     await interaction.response.send_message("Configuration reloaded from file.")
 
-CONFIG_KEYS = ["SCAN_SLEEP", "SCAN_INTERVAL", "VT_RATE_LIMIT", "MAX_MALICIOUS_MESSAGES", "VIOLATION_WINDOW", "LOG_CHANNEL_ID", "RESPONSIBLE_MODERATOR_ID"]
+CONFIG_KEYS = ["SCAN_SLEEP", "SCAN_INTERVAL", "MAX_MALICIOUS_MESSAGES", "VIOLATION_WINDOW", "LOG_CHANNEL_ID", "RESPONSIBLE_MODERATOR_ID"]
 
 async def config_key_autocomplete(interaction: discord.Interaction, current: str):
     return [
@@ -839,7 +843,7 @@ async def config_edit(interaction: discord.Interaction, key: str, value: str):
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
     
-    key = normalize_url(key)
+    key = key.lower()
 
     if key == "scan_sleep":
         global SCAN_SLEEP
@@ -1068,7 +1072,7 @@ async def on_message(message):
 
     content = message.content.strip()
     if client.user in message.mentions and message.author.guild_permissions.manage_messages:
-        if SILLY_MODE == 1:
+        if SILLY_MODE:
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
                 await message.channel.send("Yes ma'am!")
                 return
