@@ -214,26 +214,6 @@ def extract_domain(url: str) -> str:
 
 def extract_all_urls(message) -> set:
     urls = set(re.findall(URL_REGEX, message.content or ""))
-
-    for embed in message.embeds:
-        if embed.url:
-            urls.add(embed.url)
-
-        parts = [
-            embed.title,
-            embed.description,
-            embed.footer.text if embed.footer else None,
-            embed.author.name if embed.author else None,
-        ]
-
-        for field in embed.fields:
-            parts.append(field.name)
-            parts.append(field.value)
-
-        for part in parts:
-            if part:
-                urls.update(re.findall(URL_REGEX, part))
-
     return {normalize_url(url) for url in urls}
 
 async def resolve_short_url(message, url: str) -> str:
