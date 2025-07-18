@@ -212,9 +212,34 @@ def extract_domain(url: str) -> str:
     ext = tldextract.extract(url)
     return f"{ext.domain}.{ext.suffix}" if ext.suffix else ext.domain
 
-def extract_all_urls(message) -> set:
+def extract_message_urls(message) -> set:
     urls = set(re.findall(URL_REGEX, message.content or ""))
     return {normalize_url(url) for url in urls}
+
+def extract_embed_urls(message) -> set:
+    urls = set()
+    if not hasattr(message, "embeds"):
+        return urls
+
+    for embed in message.embeds:
+        if embed.url:
+            urls.add(normalize_url(embed.url))
+        if embed.title:
+            urls.update(normalize_url(u) for u in re.findall(URL_REGEX, embed.title))
+        if embed.description:
+            urls.update(normalize_url(u) for u in re.findall(URL_REGEX, embed.description))
+        for field in getattr(embed, "fields", []):
+            if hasattr(field, "value"):
+                urls.update(normalize_url(u) for u in re.findall(URL_REGEX, field.value))
+        if getattr(embed, "footer", None) and getattr(embed.footer, "text", None):
+            urls.update(normalize_url(u) for u in re.findall(URL_REGEX, embed.footer.text))
+        if getattr(embed, "author", None) and getattr(embed.author, "url", None):
+            urls.add(normalize_url(embed.author.url))
+        if getattr(embed, "image", None) and getattr(embed.image, "url", None):
+            urls.add(normalize_url(embed.image.url))
+        if getattr(embed, "thumbnail", None) and getattr(embed.thumbnail, "url", None):
+            urls.add(normalize_url(embed.thumbnail.url))
+    return urls
 
 async def resolve_short_url(message, url: str) -> str:
     try:
@@ -386,6 +411,10 @@ async def scan_worker():
                 log_info(f"Skipping allowlisted link: {url} from {message.author} ({message.author.id}) in #{message.channel}")
                 print(f"Skipping allowlisted link: {url}")
                 continue
+
+            embed_urls = extract_embed_urls(message)
+            for eurl in embed_urls:
+                await scan_queue.put((message, url))
 
             #queue for vt
             if url in scans_in_progress:
@@ -799,7 +828,7 @@ async def config_key_autocomplete(interaction: discord.Interaction, current: str
         if current.lower() in key.lower()
     ][:25]
 
-@config_group.command(name="edit", description="Edit a config option (in memory)")
+@config_group.command(name="edit", description="Edit a config option.")
 @app_commands.describe(
     key="Name of the config key (/help for details)",
     value="New value for the config key"
@@ -1050,7 +1079,7 @@ async def on_message(message):
                 await message.channel.send("Yes ma'am!")
                 return
             
-    urls = extract_all_urls(message)
+    urls = extract_message_urls(message)
     if not urls:
         return
     
@@ -1061,8 +1090,8 @@ async def on_message(message):
 async def on_message_edit(before, after):
     if after.author.bot:
         return
-    before_urls = extract_all_urls(before)
-    after_urls = extract_all_urls(after)
+    before_urls = extract_message_urls(before)
+    after_urls = extract_message_urls(after)
 
     new_urls = after_urls - before_urls
 
