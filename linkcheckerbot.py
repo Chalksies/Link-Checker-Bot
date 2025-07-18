@@ -346,11 +346,10 @@ async def scan_worker():
     while True:
         message, url = await scan_queue.get()
         domain = extract_domain(url)
-        #print(f"Processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+        deleted = False  #track if message was deleted in this scan
 
         try:
             if message.author.guild_permissions.manage_messages:
-                #if the user has manage_messages permission, skip checks
                 log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 continue
@@ -365,18 +364,22 @@ async def scan_worker():
         
             #denylist check
             if domain in DENYLIST:
-                await message.delete()
-                log_info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
-                await message.channel.send("A denylisted link was removed.")
-                log_violation(message.author, url)
-                log_channel = client.get_channel(LOG_CHANNEL_ID)
-                if log_channel:
-                    await log_channel.send(
-                        f" A message containing \"`{url}`\" was removed due to being denylisted.\n"
-                        f" Message author: {message.author.mention} ({message.author.id})\n"
-                        f" Channel: {message.channel.mention}\n"
-                        f" Timestamp: {datetime.now(timezone.utc).isoformat()}"
-                    )
+                if not hasattr(message, "_deleted") or not message._deleted:
+                    await message.delete()
+                    message._deleted = True
+                    deleted = True
+                    log_info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
+                    await message.channel.send("A denylisted link was removed.")
+                    log_violation(message.author, url)
+                    log_channel = client.get_channel(LOG_CHANNEL_ID)
+                    if log_channel:
+                        await log_channel.send(
+                            f" A message containing \"`{url}`\" was removed due to being denylisted.\n"
+                            f" Message author: {message.author.mention} ({message.author.id})\n"
+                            f" Channel: {message.channel.mention}\n"
+                            f" Timestamp: {datetime.now(timezone.utc).isoformat()}"
+                        )
+                continue
 
             #allowlist check (skip)
             if domain in ALLOWLIST:
@@ -438,8 +441,10 @@ async def vt_worker():
                     log_violation(message.author, url)
 
                     try:
-                        await message.delete
-                        await check_user_violations(message.author, message.channel)
+                        if not hasattr(message, "_deleted") or not message._deleted:
+                            await message.delete()
+                            message._deleted = True
+                            await check_user_violations(message.author, message.channel)
                     except discord.Forbidden:
                         log_warning(f"Failed to delete message from {message.author} ({message.author.id}) in #{message.channel} due to missing permissions.")
                         responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
@@ -467,13 +472,15 @@ async def vt_worker():
                     delete_count = 0
                     for msg in deferred_messages:
                         try:
-                            await msg.delete()
-                            log_violation(msg.author, url)
-                            await msg.channel.send(
-                                f"Malicious link from {msg.author.mention} was removed based on recent scan."
-                            )
-                            await check_user_violations(message.author, message.channel)
-                            delete_count += 1
+                            if not hasattr(msg, "_deleted") or not msg._deleted:
+                                await msg.delete()
+                                msg._deleted = True
+                                log_violation(msg.author, url)
+                                await msg.channel.send(
+                                    f"Malicious link from {msg.author.mention} was removed based on recent scan."
+                                )
+                                await check_user_violations(msg.author, msg.channel)
+                                delete_count += 1
                         except Exception as e:
                             log_warning(f"Failed to delete deferred message: {e}")
 
