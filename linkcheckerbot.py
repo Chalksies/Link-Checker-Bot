@@ -182,6 +182,8 @@ scan_queue = asyncio.Queue()
 
 last_scanned_urls: set[str] = set()
 scans_in_progress: dict[str, list[discord.Message]] = {}
+embed_scanned_messages = set()
+deleted_messages = set()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -389,9 +391,9 @@ async def scan_worker():
         
             #denylist check
             if domain in DENYLIST:
-                if not hasattr(message, "_deleted") or not message._deleted:
+                if message.id not in deleted_messages:
                     await message.delete()
-                    message._deleted = True
+                    deleted_messages.add(message.id)
                     deleted = True
                     log_info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
                     await message.channel.send("A denylisted link was removed.")
@@ -413,12 +415,12 @@ async def scan_worker():
                 continue
 
             #only scan embeds once
-            if not hasattr(message, "_embed_scanned"):
+            if message.id not in embed_scanned_messages:
                 embed_urls = extract_embed_urls(message)
                 embed_urls.discard(url)
                 for eurl in embed_urls:
                     await scan_queue.put((message, eurl))
-                message._embed_scanned = True
+                embed_scanned_messages.add(message.id)
 
             #queue for vt
             if url in scans_in_progress:
@@ -474,9 +476,9 @@ async def vt_worker():
                     log_violation(message.author, url)
 
                     try:
-                        if not hasattr(message, "_deleted") or not message._deleted:
-                            await message.delete()
-                            message._deleted = True
+                        if msg.id not in deleted_messages:
+                            await msg.delete()
+                            deleted_messages.add(msg.id)
                             await check_user_violations(message.author, message.channel)
                     except discord.Forbidden:
                         log_warning(f"Failed to delete message from {message.author} ({message.author.id}) in #{message.channel} due to missing permissions.")
