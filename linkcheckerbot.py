@@ -476,9 +476,9 @@ async def vt_worker():
                     log_violation(message.author, url)
 
                     try:
-                        if msg.id not in deleted_messages:
-                            await msg.delete()
-                            deleted_messages.add(msg.id)
+                        if message.id not in deleted_messages:
+                            await message.delete()
+                            deleted_messages.add(message.id)
                             await check_user_violations(message.author, message.channel)
                     except discord.Forbidden:
                         log_warning(f"Failed to delete message from {message.author} ({message.author.id}) in #{message.channel} due to missing permissions.")
@@ -507,9 +507,9 @@ async def vt_worker():
                     delete_count = 0
                     for msg in deferred_messages:
                         try:
-                            if not hasattr(msg, "_deleted") or not msg._deleted:
+                            if msg.id not in deleted_messages:
                                 await msg.delete()
-                                msg._deleted = True
+                                deleted_messages.add(msg.id)
                                 log_violation(msg.author, url)
                                 await msg.channel.send(
                                     f"Malicious link from {msg.author.mention} was removed based on recent scan."
@@ -518,6 +518,10 @@ async def vt_worker():
                                 delete_count += 1
                         except Exception as e:
                             log_warning(f"Failed to delete deferred message: {e}")
+                            print(f"Failed to delete deferred message: {e}")
+                            responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                            if responsible_moderator:
+                                await msg.channel.send(f"{responsible_moderator.mention} I failed to delete deferred message: {e}")
 
                     #log result to moderation channel
                     if log_channel:
