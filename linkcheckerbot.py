@@ -759,6 +759,11 @@ async def on_ready():
 @allowlist_group.command(name="add", description="Add a domain to the allowlist")
 @app_commands.describe(domain="The domain to allowlist (e.g. discord.com)")
 async def allowlist_add(interaction: discord.Interaction, domain: str):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -774,6 +779,11 @@ async def allowlist_add(interaction: discord.Interaction, domain: str):
 @allowlist_group.command(name="remove", description="Remove a domain from the allowlist")
 @app_commands.describe(domain="The domain to remove from the allowlist")
 async def allowlist_remove(interaction: discord.Interaction, domain: str):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -788,6 +798,11 @@ async def allowlist_remove(interaction: discord.Interaction, domain: str):
 
 @allowlist_group.command(name="show", description="Show the current allowlist")
 async def allowlist_show(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -815,6 +830,11 @@ async def allowlist_show(interaction: discord.Interaction):
 
 @allowlist_group.command(name="reload", description="Reload the allowlist from file")
 async def allowlist_reload(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -826,6 +846,11 @@ async def allowlist_reload(interaction: discord.Interaction):
 @denylist_group.command(name="add", description="Add a domain to the denylist")
 @app_commands.describe(domain="The domain to denylist (e.g. example.com)")
 async def denylist_add(interaction: discord.Interaction, domain: str):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -841,6 +866,11 @@ async def denylist_add(interaction: discord.Interaction, domain: str):
 @denylist_group.command(name="remove", description="Remove a domain from the denylist")
 @app_commands.describe(domain="The domain to remove from the denylist")
 async def denylist_remove(interaction: discord.Interaction, domain: str):  
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -855,6 +885,11 @@ async def denylist_remove(interaction: discord.Interaction, domain: str):
 
 @denylist_group.command(name="show", description="Show the current denylist")
 async def denylist_show(interaction: discord.Interaction): 
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -882,6 +917,11 @@ async def denylist_show(interaction: discord.Interaction):
 
 @denylist_group.command(name="reload", description="Reload the denylist from file")
 async def denylist_reload(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -893,6 +933,11 @@ async def denylist_reload(interaction: discord.Interaction):
 @shortener_group.command(name="add", description="Add a domain to the shortener list")
 @app_commands.describe(domain="The domain to add to the shortener list (e.g. bit.ly)")
 async def shortenerlist_add(interaction: discord.Interaction, domain: str):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -908,6 +953,11 @@ async def shortenerlist_add(interaction: discord.Interaction, domain: str):
 @shortener_group.command(name="remove", description="Remove a domain from the shortener list")
 @app_commands.describe(domain="The domain to remove from the shortener list")
 async def shortenerlist_remove(interaction: discord.Interaction, domain: str):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -922,6 +972,11 @@ async def shortenerlist_remove(interaction: discord.Interaction, domain: str):
 
 @shortener_group.command(name="show", description="Show the current shortener list")
 async def shortenerlist_show(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -949,6 +1004,11 @@ async def shortenerlist_show(interaction: discord.Interaction):
 
 @shortener_group    .command(name="reload", description="Reload the shortener list from file")
 async def shortenerlist_reload(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -959,6 +1019,11 @@ async def shortenerlist_reload(interaction: discord.Interaction):
 
 @config_group.command(name="show", description="Display the currently loaded configuration")
 async def config_show(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -980,6 +1045,11 @@ async def config_show(interaction: discord.Interaction):
 
 @config_group.command(name="reload", description="Reload the bot configuration from file")
 async def config_reload(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -1004,6 +1074,11 @@ async def config_key_autocomplete(interaction: discord.Interaction, current: str
 )
 @app_commands.autocomplete(key=config_key_autocomplete)
 async def config_edit(interaction: discord.Interaction, key: str, value: str):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -1050,6 +1125,11 @@ async def config_edit(interaction: discord.Interaction, key: str, value: str):
     
 @config_group.command(name="toggle_debug", description="Toggle debug mode")
 async def config_toggle_debug(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("Permission denied.", ephemeral=True)
         return
@@ -1064,6 +1144,11 @@ async def config_toggle_debug(interaction: discord.Interaction):
 @violations_group.command(name="show", description="Show all violations for a user")
 @app_commands.describe(user="The user to view violations for")
 async def violations_show(interaction: discord.Interaction, user: discord.User):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -1109,6 +1194,11 @@ async def violations_show(interaction: discord.Interaction, user: discord.User):
 @manual_group.command(name="check_link", description="Manually scan a link via the VirusTotal API")
 @app_commands.describe(url="The full URL to scan (including http/https)")
 async def debug_manual_check(interaction: discord.Interaction, url: str):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -1187,6 +1277,11 @@ async def debug_manual_check(interaction: discord.Interaction, url: str):
 @manual_group.command(name="check_file", description="Manually scan a file attachment via the VirusTotal API")
 @app_commands.describe(file="The file to scan")
 async def manual_check_file(interaction: discord.Interaction, file: discord.Attachment):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -1247,6 +1342,11 @@ async def manual_check_file(interaction: discord.Interaction, file: discord.Atta
 
 @debug_group.command(name="throw_error", description="Manually raise a test exception")
 async def debug_throw_error(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -1260,6 +1360,11 @@ async def debug_throw_error(interaction: discord.Interaction):
 
 @debug_group.command(name="throw_warning", description="Manually trigger a warning log")
 async def debug_throw_warning(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+    
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -1273,6 +1378,11 @@ async def debug_throw_warning(interaction: discord.Interaction):
     
 @tree.command(name="ping", description="Show bot latency and response time")
 async def ping_command(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     heartbeat = round(client.latency * 1000)
 
     await interaction.response.defer()
@@ -1327,6 +1437,11 @@ async def stats_command(interaction: discord.Interaction):
 
 @tree.command(name="help", description="Show help and usage info")
 async def help_command(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
     is_admin = interaction.user.guild_permissions.manage_messages
 
     embed = discord.Embed(
