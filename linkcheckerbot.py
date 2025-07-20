@@ -44,6 +44,8 @@ DEFAULT_CONFIG = """
         silly_mode = false
         debug_mode = false
         resposible_moderator_id = 0            #optional, user ID of the responsible moderator for the bot
+        scannable_file_extensions = [".exe", ".dll", ".bin", ".dat", ".scr", ".zip", ".rar", ".tar.gz"]
+        max_file_scan_size_mb = 30    
 
         [virustotal]
         api_key = "YOUR_VIRUSTOTAL_API_KEY"
@@ -68,7 +70,9 @@ DEFAULT_CONFIG = """
 DEFAULT_STATS = {
     "messages_scanned": 0,
     "urls_scanned": 0,
+    "attachments_scanned": 0,
     "malicious_urls": 0,
+    "malicious_attachments": 0,
     "messages_deleted": 0,
     "shorteners_expanded": 0,
     "violations_logged": 0,
@@ -104,6 +108,8 @@ SCAN_SLEEP = config["virustotal"]["scan_sleep"]
 SCAN_INTERVAL = config["virustotal"]["scan_interval_seconds"]
 MAX_MALICIOUS_MESSAGES = config["moderation"]["max_violations"]
 VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minutes"])
+SCANNABLE_EXTENSIONS = tuple(config["moderation"].get("scannable_file_extensions", []))
+MAX_FILE_SIZE = config["moderation"].get("max_file_scan_size_mb", 30) * 1024 * 1024
 
 ALLOWLIST_PATH = config["structure"]["allowlist_path"]
 DENYLIST_PATH = config["structure"]["denylist_path"]
@@ -213,6 +219,7 @@ def increment_stat(key, amount=1):
 #queue to control rate-limited api use
 vt_queue = asyncio.Queue()
 scan_queue = asyncio.Queue()
+attachment_vt_queue = asyncio.Queue()
 
 last_scanned_urls: set[str] = set()
 scans_in_progress: dict[str, list[discord.Message]] = {}
@@ -364,13 +371,13 @@ async def virustotal_lookup(session, url, channel):
         if resp.status != 200:
             print(f"URL submission failed for {url}: HTTP {resp.status}")
             log_info(f"URL submission failed for {url}: HTTP {resp.status}",  )
-            log_channel = client.get_channel(LOG_CHANNEL_ID)
-            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-            if log_channel and responsible_mod:
-                await log_channel.send(
-                    f"{responsible_mod.mention}, I failed to scan a link!\n"
-                    f"(URL submission failed for `{url}`: HTTP {resp.status})"
-                )
+            #log_channel = client.get_channel(LOG_CHANNEL_ID)
+            #responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            #if log_channel and responsible_mod:
+            #    await log_channel.send(
+            #        f"{responsible_mod.mention}, I failed to scan a link!\n"
+            #        f"(URL submission failed for `{url}`: HTTP {resp.status})"
+            #    )
 
             raise Exception(f"URL submission failed for {url}: HTTP {resp.status}")
 
@@ -401,6 +408,50 @@ async def virustotal_lookup(session, url, channel):
         raise Exception(f"Malformed response for {url}: {report}")
 
     return report
+
+async def virustotal_scan_file(session, file_bytes, filename, channel):
+    """Uploads a file to VirusTotal and retrieves the scan report."""
+    headers = {"x-apikey": VT_API_KEY}
+    
+    #uload the file to get an analysis id
+    upload_url = "https://www.virustotal.com/api/v3/files"
+    form_data = aiohttp.FormData()
+    form_data.add_field('file', file_bytes, filename=filename)
+
+    async with session.post(upload_url, headers=headers, data=form_data) as resp:
+        if resp.status != 200:
+            log_error(f"File upload failed for {filename}: HTTP {resp.status}")
+            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            if responsible_mod:
+                await channel.send(
+                    f"{responsible_mod.mention}, I failed to upload an attachment for scanning!\n"
+                    f"(File upload failed for `{filename}`: HTTP {resp.status})"
+                )
+            raise Exception(f"File upload failed for {filename}: HTTP {resp.status}")
+        
+        upload_data = await resp.json()
+        analysis_id = upload_data["data"]["id"]
+
+    #poll the analysis endpoint until it's complete
+    analysis_url = f"https://www.virustotal.com/api/v3/analyses/{analysis_id}"
+    while True:
+        await asyncio.sleep(SCAN_SLEEP) # Wait before checking the report
+        async with session.get(analysis_url, headers=headers) as resp:
+            if resp.status != 200:
+                log_error(f"File report fetch failed for {filename}: HTTP {resp.status}")
+                raise Exception(f"File report fetch failed for {filename}: HTTP {resp.status}")
+            
+            report = await resp.json()
+            status = report.get("data", {}).get("attributes", {}).get("status")
+
+            if status == "completed":
+                return report # Analysis is done, return the full report
+            elif status == "queued" or status == "inprogress":
+                log_info(f"Analysis for {filename} is '{status}'. Waiting...")
+                continue # Keep waiting
+            else:
+                log_error(f"Unexpected analysis status for {filename}: {status}")
+                raise Exception(f"Unexpected analysis status for {filename}: {status}")
 
 #worker to process the scan queue
 async def scan_worker():
@@ -594,8 +645,71 @@ async def vt_worker():
                 scans_in_progress.pop(url, None)
 
             finally:
-                await asyncio.sleep(SCAN_INTERVAL) #rate limit to avoid hitting VT too fast
+                await asyncio.sleep(SCAN_INTERVAL) #rate limit to avoid hitting vt too fast
                 vt_queue.task_done()
+
+async def attachment_vt_worker():
+    async with aiohttp.ClientSession() as session:
+        while True:
+            message, attachment = await attachment_vt_queue.get()
+            try:
+                log_info(f"Scanning attachment: {attachment.filename} from {message.author} ({message.author.id})")
+                
+                #read file content into memory
+                file_bytes = await attachment.read()
+                
+                #scan the file using vt
+                report = await virustotal_scan_file(session, file_bytes, attachment.filename, message.channel)
+                stats = report["data"]["attributes"]["stats"]
+                detections = stats.get("malicious", 0)
+
+                if detections > 0:
+                    increment_stat("malicious_attachments")
+                    log_info(f"[MALICIOUS ATTACHMENT] Deleted message with attachment: {attachment.filename} from {message.author}")
+                    
+                    log_violation(message.author, f"malicious attachment: {attachment.filename}")
+                    increment_stat("violations_logged")
+
+                    try:
+                        await message.delete()
+                        increment_stat("messages_deleted")
+                        await check_user_violations(message.author, message.channel)
+                    except discord.Forbidden:
+                        log_warning(f"Failed to delete message with attachment from {message.author} due to missing permissions.")
+                        responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                        if responsible_moderator:
+                            await message.channel.send(
+                                f"I tried to delete a message with a malicious attachment but I don't have permissions, {responsible_moderator.mention}!"
+                            )
+                        continue
+
+                    await message.channel.send(
+                        f"Malicious attachment (`{attachment.filename}`) from {message.author.mention} was removed.\n"
+                        f"({detections} detections on VirusTotal)"
+                    )
+                    
+                    log_channel = client.get_channel(LOG_CHANNEL_ID)
+                    if log_channel:
+                        await log_channel.send(
+                            f"Attachment `{attachment.filename}` flagged as malicious by VirusTotal ({detections} detections).\n"
+                            f"Message deleted.\n"
+                            f"Sender: {message.author.mention} ({message.author.id})\n"
+                            f"Time: `{datetime.now(timezone.utc).isoformat()}`"
+                        )
+                else:
+                    log_info(f"[CLEAN ATTACHMENT] {attachment.filename} had no detections.")
+
+            except Exception as e:
+                log_error(f"[Attachment Worker Error] Failed to scan {attachment.filename}: {e}")
+                responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                if responsible_mod:
+                     await message.channel.send(
+                        f"{responsible_mod.mention}, I failed to scan an attachment!\n"
+                        f"[Attachment Worker Error] Error: {e})"
+                    )
+            finally:
+                await asyncio.sleep(SCAN_INTERVAL) #again, avoid hitting vt too much
+                attachment_vt_queue.task_done()
 
 async def check_user_violations(user, message_channel):
     now = datetime.now(timezone.utc)
@@ -640,6 +754,7 @@ async def on_ready():
     print(f"Current log size: {log_line_count} lines")
     client.loop.create_task(scan_worker())
     client.loop.create_task(vt_worker())
+    client.loop.create_task(attachment_vt_worker())
 
 @allowlist_group.command(name="add", description="Add a domain to the allowlist")
 @app_commands.describe(domain="The domain to allowlist (e.g. discord.com)")
@@ -991,7 +1106,7 @@ async def violations_show(interaction: discord.Interaction, user: discord.User):
         log_error(f"Failed to show violations: {e}")
         await interaction.response.send_message("Error loading violations log.", ephemeral=True)
 
-@manual_group.command(name="check", description="Manually scan a link via the VirusTotal API")
+@manual_group.command(name="check_link", description="Manually scan a link via the VirusTotal API")
 @app_commands.describe(url="The full URL to scan (including http/https)")
 async def debug_manual_check(interaction: discord.Interaction, url: str):
     if not interaction.user.guild_permissions.manage_messages:
@@ -999,12 +1114,15 @@ async def debug_manual_check(interaction: discord.Interaction, url: str):
         return
 
     await interaction.response.defer(thinking=True)
-
-    norm_url = normalize_url(url)
-    increment_stat("urls_scanned")
+ 
+    try:
+        norm_url = normalize_url(url)
+        increment_stat("urls_scanned")
+    except Exception as e:
+        await interaction.followup.edit_original_response(f"An error occured while resolving URL: {e}")
 
     if extract_domain(norm_url) in SHORTENERS:
-        await interaction.followup.send(f"`{norm_url}` is a shortener. Resolving...")
+        await interaction.followup.edit_original_response(f"`{norm_url}` is a shortener. Resolving...")
         try:
             norm_url = await resolve_short_url(interaction.user, norm_url)
             increment_stat("shorteners_expanded")
@@ -1014,16 +1132,16 @@ async def debug_manual_check(interaction: discord.Interaction, url: str):
     domain = extract_domain(norm_url)
 
     if domain in ALLOWLIST:
-        await interaction.followup.send(f"`{norm_url}` is in the allowlist. It will not be scanned.")
+        await interaction.followup.edit_original_response(f"`{norm_url}` is in the allowlist. It will not be scanned.")
         increment_stat("allowlist_hits")
         return
 
     if domain in DENYLIST:
-        await interaction.followup.send(f"`{norm_url}` is in the denylist! It will not be scanned.")
+        await interaction.followup.edit_original_response(f"`{norm_url}` is in the denylist! It will not be scanned.")
         increment_stat("denylist_hits")
         return
     
-    await interaction.followup.send(f"This might take a while... (15~ seconds)")
+    await interaction.followup.edit_original_response(f"This might take a while... (15~ seconds)")
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -1065,6 +1183,66 @@ async def debug_manual_check(interaction: discord.Interaction, url: str):
         except Exception as e:
             await interaction.followup.edit_original_response(f"Failed to scan the link: {e}")
             log_error(f"[Manual Check Error] {url}: {e}")
+
+@manual_group.command(name="check_file", description="Manually scan a file attachment via the VirusTotal API")
+@app_commands.describe(file="The file to scan")
+async def manual_check_file(interaction: discord.Interaction, file: discord.Attachment):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+
+    #validate file against configured rules
+    if not file.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+        await interaction.followup.send(f"The file type `{file.filename.split('.')[-1]}` is not in the scannable list. No action will be taken.", ephemeral=True)
+        return
+
+    if file.size > MAX_FILE_SIZE:
+        await interaction.followup.send(f"The file `{file.filename}` is too large to be scanned ({file.size / 1024 / 1024:.2f}MB).", ephemeral=True)
+        return
+
+    await interaction.followup.send(f"Uploading and scanning `{file.filename}`... This might take a moment.")
+    increment_stat("attachments_scanned")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            file_bytes = await file.read()
+            report = await virustotal_scan_file(session, file_bytes, file.filename, interaction.channel)
+
+            stats = report["data"]["attributes"]["stats"]
+            malicious = stats.get("malicious", 0)
+            suspicious = stats.get("suspicious", 0)
+            harmless = stats.get("harmless", 0)
+
+            verdict = "Malicious" if malicious > 0 else "Suspicious" if suspicious > 0 else "Clean"
+            
+            color = discord.Color.red() if malicious > 0 else discord.Color.orange() if suspicious > 0 else discord.Color.green()
+            if malicious > 0:
+                increment_stat("malicious_attachments")
+
+            # Get a short list of engines that flagged it
+            flagged_by = [
+                name for name, result in report["data"]["attributes"]["results"].items()
+                if result["category"] in {"malicious", "suspicious"}
+            ][:10]
+
+            embed = discord.Embed(
+                title=f"VirusTotal Scan for {file.filename}",
+                description=f"Verdict: **{verdict}**",
+                color=color
+            )
+            embed.add_field(name="Malicious", value=str(malicious), inline=True)
+            embed.add_field(name="Suspicious", value=str(suspicious), inline=True)
+            embed.add_field(name="Harmless/Undetected", value=str(harmless), inline=True)
+            embed.add_field(name="Flagged By", value=", ".join(flagged_by) if flagged_by else "None", inline=False)
+            embed.set_footer(text=f"Scanned via /check_file by {interaction.user}", icon_url=interaction.user.display_avatar.url)
+
+            await interaction.edit_original_response(content=None, embed=embed)
+
+    except Exception as e:
+        log_error(f"[Manual File Check Error] {file.filename}: {e}")
+        await interaction.edit_original_response(content=f"An error occurred while scanning the file: {e}")
 
 
 @debug_group.command(name="throw_error", description="Manually raise a test exception")
@@ -1131,6 +1309,8 @@ async def stats_command(interaction: discord.Interaction):
     embed.add_field(name="URLs Found", value=str(stats["urls_scanned"]), inline=False)
     
     embed.add_field(name="Shorteners Expanded", value=str(stats["shorteners_expanded"]), inline=False)
+    embed.add_field(name="Attachments Scanned", value=str(stats["attachments_scanned"]), inline=False) 
+    embed.add_field(name="Malicious Attachments", value=str(stats["malicious_attachments"]), inline=False) 
 
     embed.add_field(name="Allowlist Hits", value=str(stats["allowlist_hits"]), inline=False)
     embed.add_field(name="Denylist Hits", value=str(stats["denylist_hits"]), inline=False)
@@ -1235,6 +1415,27 @@ async def help_command(interaction: discord.Interaction):
 async def on_message(message):
     if message.author.bot:
         return
+    
+    if message.guild is None:
+        await message.channel.send(f"I don't currently support DMs!")
+
+    if message.attachments:
+        if message.author.guild_permissions.manage_messages:
+            log_info(f"Skipping attachment check for {message.author} due to mod permissions.")
+        else:
+            for attachment in message.attachments:
+                #check if the file extension is in our scannable list
+                if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+                    #check file size
+                    if attachment.size > MAX_FILE_SIZE:
+                        log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
+                        continue
+                    
+                    increment_stat("attachments_scanned")
+                    #put the message and attachment object into the new queue
+                    await attachment_vt_queue.put((message, attachment))
+                else:
+                    log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
     
     increment_stat("messages_scanned")
     if SILLY_MODE:

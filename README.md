@@ -14,10 +14,10 @@ Setting up:
 - Clone this repository
 - Run `pip install -r requirements.txt` inside the folder, preferably in a venv
 - Run the script once and follow instructions
-- Set up a allowlist.json and a denylist.json
-- Run the python script.
+- Set up a denylist.json if desired.
+- Run the python script again to start the bot.
 ----------------------------------------
 Usage: The bot is fully automatic. You can manipulate the allowlist and denylist through slash commands.  
-
+Warning: This bot is in active development. Expect errors.
 ----------------------------------------
 Made for r/traaaaaaannnnnnnnnns2 official Discord server by Chalk.
