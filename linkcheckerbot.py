@@ -458,13 +458,7 @@ async def scan_worker():
     while True:
         message, url = await scan_queue.get()
         domain = extract_domain(url)
-
         try:
-            if message.author.guild_permissions.manage_messages and not message.webhook_id:
-                log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
-                print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
-                continue
-
             if domain in SHORTENERS:
                 resolved_url = await resolve_short_url(message, url)
                 if resolved_url != url:
@@ -508,6 +502,7 @@ async def scan_worker():
                 embed_urls = extract_embed_urls(message)
                 embed_urls.discard(url)
                 for eurl in embed_urls:
+                    increment_stat("urls_scanned")
                     await scan_queue.put((message, eurl))
                 embed_scanned_messages.add(message.id)
 
@@ -1529,13 +1524,13 @@ async def help_command(interaction: discord.Interaction):
 async def on_message(message):
     if message.author == client.user:
         return
-    
+
     if message.guild is None:
-        await message.channel.send(f"I don't currently support DMs!")
+        await message.channel.send("I don't currently support DMs!")
         return
 
-    
     increment_stat("messages_scanned")
+
     if SILLY_MODE:
         if client.user in message.mentions and message.author.guild_permissions.manage_messages:
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
@@ -1548,27 +1543,50 @@ async def on_message(message):
                 await message.channel.send("Yes ma'am!")
                 return
             
-    urls = extract_message_urls(message)
-    if not urls:
-        return
-    
-    for url in urls:
-        await scan_queue.put((message, url))
-
-    if message.attachments:
-        if message.author.guild_permissions.manage_messages and not message.webhook_id:
-            log_info(f"Skipping attachment check for {message.author} due to mod permissions.")
-        else:
+    if message.webhook_id or message.author.bot:
+        urls = extract_message_urls(message)
+        for url in urls:
+            await scan_queue.put((message, url))
+        if message.attachments:
             for attachment in message.attachments:
-                #check if the file extension is in our scannable list
                 if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
-                    #check file size
                     if attachment.size > MAX_FILE_SIZE:
                         log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
                         continue
                     
                     increment_stat("attachments_scanned")
-                    #put the message and attachment object into the new queue
+                    await attachment_vt_queue.put((message, attachment))
+                else:
+                    log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
+        return
+
+    if message.author.guild_permissions.manage_messages:
+        urls = extract_message_urls(message)
+        if not urls:
+            pass
+        else:
+            log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
+            print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
+        
+        if message.attachments:
+            log_info(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
+            print(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
+        else:
+            return
+        return
+    
+    urls = extract_message_urls(message)
+    for url in urls:
+        await scan_queue.put((message, url))
+
+    if message.attachments:
+            for attachment in message.attachments:
+                if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+                    if attachment.size > MAX_FILE_SIZE:
+                        log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
+                        continue
+                    
+                    increment_stat("attachments_scanned")
                     await attachment_vt_queue.put((message, attachment))
                 else:
                     log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
@@ -1577,6 +1595,7 @@ async def on_message(message):
 async def on_message_edit(before, after):
     if after.author == client.user:
         return
+    
     before_urls = extract_message_urls(before)
     after_urls = extract_message_urls(after)
 
