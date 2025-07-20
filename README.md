@@ -7,6 +7,7 @@ Features:
 - A allowlist and blocklist that can be manipulated from discord via slash commands.
 - Logging (on device and on discord)
 - Timing out users on malicious spam detection.
+- Manual usage of the API.
 ----------------------------------------
 Setting up:  
 - Create bot via Discord Developer Portal

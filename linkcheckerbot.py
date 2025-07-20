@@ -232,6 +232,7 @@ shortener_group = app_commands.Group(name="shortenerlist", description="Manage t
 config_group = app_commands.Group(name="config", description="Manage the bot configuration")
 violations_group = app_commands.Group(name="violations", description="Manage and view link violations")
 debug_group = app_commands.Group(name="debug", description="Debugging tools")
+manual_group = app_commands.Group(name="manual", description="Scan URLs/Attachments manually.")
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
@@ -239,6 +240,7 @@ tree.add_command(shortener_group)
 tree.add_command(config_group)
 tree.add_command(violations_group)
 tree.add_command(debug_group)
+tree.add_command(manual_group)
 
 def vt_url_id(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
@@ -250,9 +252,11 @@ def extract_domain(url: str) -> str:
 
 def extract_message_urls(message) -> set:
     urls = set(re.findall(URL_REGEX, message.content or ""))
+    normalized_urls = set()
     for url in urls:
         increment_stat("urls_scanned")
-        return normalize_url(url)
+        normalized_urls.add(normalize_url(url))
+    return normalized_urls
 
 def extract_embed_urls(message) -> set:
     urls = set()
@@ -987,6 +991,82 @@ async def violations_show(interaction: discord.Interaction, user: discord.User):
         log_error(f"Failed to show violations: {e}")
         await interaction.response.send_message("Error loading violations log.", ephemeral=True)
 
+@manual_group.command(name="check", description="Manually scan a link via the VirusTotal API")
+@app_commands.describe(url="The full URL to scan (including http/https)")
+async def debug_manual_check(interaction: discord.Interaction, url: str):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+
+    norm_url = normalize_url(url)
+    increment_stat("urls_scanned")
+
+    if extract_domain(norm_url) in SHORTENERS:
+        await interaction.followup.send(f"`{norm_url}` is a shortener. Resolving...")
+        try:
+            norm_url = await resolve_short_url(interaction.user, norm_url)
+            increment_stat("shorteners_expanded")
+        except Exception as e:
+            await interaction.followup.edit_original_response(f"Failed to resolve shortener: {e}")
+
+    domain = extract_domain(norm_url)
+
+    if domain in ALLOWLIST:
+        await interaction.followup.send(f"`{norm_url}` is in the allowlist. It will not be scanned.")
+        increment_stat("allowlist_hits")
+        return
+
+    if domain in DENYLIST:
+        await interaction.followup.send(f"`{norm_url}` is in the denylist! It will not be scanned.")
+        increment_stat("denylist_hits")
+        return
+    
+    await interaction.followup.send(f"This might take a while... (15~ seconds)")
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            increment_stat("virustotal_scans")
+            report = await virustotal_lookup(session, norm_url, interaction.channel)
+            stats = report["data"]["attributes"]["last_analysis_stats"]
+            malicious = stats.get("malicious", 0)
+            suspicious = stats.get("suspicious", 0)
+            harmless = stats.get("harmless", 0)
+            total = sum(stats.values())
+
+            verdict = (
+                "Malicious"
+                if malicious > 0 else
+                "Suspicious"
+                if suspicious > 0 else
+                "Clean"
+            )
+
+            # get short list of engines that flagged it
+            flagged = [
+                name for name, result in report["data"]["attributes"]["last_analysis_results"].items()
+                if result["category"] in {"malicious", "suspicious"}
+            ][:10]
+
+            embed = discord.Embed(
+                title=f"VirusTotal Scan for {norm_url}",
+                description=f"Verdict: **{verdict}**",
+                color=discord.Color.red() and increment_stat("malicious_urls") if malicious > 0 else discord.Color.orange() if suspicious > 0 else discord.Color.green()
+            )
+            embed.add_field(name="Malicious", value=str(malicious), inline=True)
+            embed.add_field(name="Suspicious", value=str(suspicious), inline=True)
+            embed.add_field(name="Harmless", value=str(harmless), inline=True)
+            embed.add_field(name="Flagged by", value=", ".join(flagged) if flagged else "None", inline=False)
+            embed.set_footer(text=f"Scanned via /check by {interaction.user}", icon_url=interaction.user.display_avatar.url)
+
+            await interaction.edit_original_response(embed=embed)
+
+        except Exception as e:
+            await interaction.followup.edit_original_response(f"Failed to scan the link: {e}")
+            log_error(f"[Manual Check Error] {url}: {e}")
+
+
 @debug_group.command(name="throw_error", description="Manually raise a test exception")
 async def debug_throw_error(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
@@ -1049,6 +1129,7 @@ async def stats_command(interaction: discord.Interaction):
 
     embed.add_field(name="Messages Scanned for URLs", value=str(stats["messages_scanned"]), inline=False)
     embed.add_field(name="URLs Found", value=str(stats["urls_scanned"]), inline=False)
+    
     embed.add_field(name="Shorteners Expanded", value=str(stats["shorteners_expanded"]), inline=False)
 
     embed.add_field(name="Allowlist Hits", value=str(stats["allowlist_hits"]), inline=False)
@@ -1156,8 +1237,8 @@ async def on_message(message):
         return
     
     increment_stat("messages_scanned")
-    if client.user in message.mentions and message.author.guild_permissions.manage_messages:
-        if SILLY_MODE:
+    if SILLY_MODE:
+        if client.user in message.mentions and message.author.guild_permissions.manage_messages:
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
                 await message.channel.send("Yes ma'am!")
                 return
