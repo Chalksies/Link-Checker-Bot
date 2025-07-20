@@ -64,6 +64,18 @@ DEFAULT_CONFIG = """
         violation_path = "violations.json"
         """
 
+
+DEFAULT_STATS = {
+    "messages_scanned": 0,
+    "urls_scanned": 0,
+    "malicious_urls": 0,
+    "messages_deleted": 0,
+    "shorteners_expanded": 0,
+    "violations_logged": 0,
+    "allowlist_hits": 0,
+    "denylist_hits": 0
+}
+
 CONFIG_PATH = "config.toml"
 
 if not os.path.exists(CONFIG_PATH):
@@ -99,6 +111,7 @@ SHORTENER_PATH = config["structure"]["shortener_list_path"]
 LOGGING_PATH = config["structure"]["logging_dir"]
 MAX_LOG_LINES = config["structure"]["max_log_lines"]
 VIOLATION_LOG_PATH = config["structure"]["violation_path"]
+STATS_PATH = config["structure"]["stats_path"]
 
 def save_config():
     with open(CONFIG_PATH, "wb") as f:
@@ -176,6 +189,27 @@ def log_info(msg): log_and_rotate(msg )
 def log_warning(msg): log_and_rotate(msg, logging.WARNING)
 def log_error(msg): log_and_rotate(msg, logging.ERROR)
 
+if not os.path.exists(STATS_PATH):
+    with open(STATS_PATH, "w") as f:
+        json.dump(DEFAULT_STATS, f, indent=2)
+
+def load_stats():
+    try:
+        with open(STATS_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return DEFAULT_STATS.copy()
+
+def save_stats():
+    with open(STATS_PATH, "w") as f:
+        json.dump(stats, f, indent=2)
+
+stats = load_stats()
+
+def increment_stat(key, amount=1):
+    stats[key] = stats.get(key, 0) + amount
+    save_stats()
+
 #queue to control rate-limited api use
 vt_queue = asyncio.Queue()
 scan_queue = asyncio.Queue()
@@ -216,7 +250,9 @@ def extract_domain(url: str) -> str:
 
 def extract_message_urls(message) -> set:
     urls = set(re.findall(URL_REGEX, message.content or ""))
-    return {normalize_url(url) for url in urls}
+    for url in urls:
+        increment_stat("urls_scanned")
+        return normalize_url(url)
 
 def extract_embed_urls(message) -> set:
     urls = set()
@@ -235,12 +271,6 @@ def extract_embed_urls(message) -> set:
                 urls.update(normalize_url(u) for u in re.findall(URL_REGEX, field.value))
         if getattr(embed, "footer", None) and getattr(embed.footer, "text", None):
             urls.update(normalize_url(u) for u in re.findall(URL_REGEX, embed.footer.text))
-        if getattr(embed, "author", None) and getattr(embed.author, "url", None):
-            urls.add(normalize_url(embed.author.url))
-        if getattr(embed, "image", None) and getattr(embed.image, "url", None):
-            urls.add(normalize_url(embed.image.url))
-        if getattr(embed, "thumbnail", None) and getattr(embed.thumbnail, "url", None):
-            urls.add(normalize_url(embed.thumbnail.url))
     return urls
 
 async def resolve_short_url(message, url: str) -> str:
@@ -347,12 +377,12 @@ async def virustotal_lookup(session, url, channel):
     async with session.get(report_url, headers=headers) as resp:
         if resp.status != 200:
             print(f"Report fetch failed for {url}: HTTP {resp.status}")
-            #responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
-            #if responsible_mod:
-            #    await channel.send(
-            #       f"{responsible_mod.mention}, I failed to scan a link!\n"
-            #        f"(Report fetch failed: HTTP {resp.status})"
-            #   )
+            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            if responsible_mod:
+                await channel.send(
+                   f"{responsible_mod.mention}, I failed to scan a link!\n"
+                    f"(Report fetch failed: HTTP {resp.status})"
+               )
 
             raise Exception(f"Report fetch failed for {url}: HTTP {resp.status}")
         report = await resp.json()
@@ -384,6 +414,7 @@ async def scan_worker():
             if domain in SHORTENERS:
                 resolved_url = await resolve_short_url(message, url)
                 if resolved_url != url:
+                    increment_stat("shorteners_expanded")
                     log_info(f"Expanded short URL: {url} → {resolved_url}" )
                     print(f"Expanded short URL: {url} → {resolved_url}")
                 url = resolved_url
@@ -392,12 +423,15 @@ async def scan_worker():
             #denylist check
             if domain in DENYLIST:
                 if message.id not in deleted_messages:
+                    increment_stat("denylist_hits")
                     await message.delete()
+                    increment_stat("messages_deleted")
                     deleted_messages.add(message.id)
                     deleted = True
                     log_info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
                     await message.channel.send("A denylisted link was removed.")
                     log_violation(message.author, url)
+                    increment_stat("violations_logged")
                     log_channel = client.get_channel(LOG_CHANNEL_ID)
                     if log_channel:
                         await log_channel.send(
@@ -412,6 +446,7 @@ async def scan_worker():
             if domain in ALLOWLIST:
                 log_info(f"Skipping allowlisted link: {url} from {message.author} ({message.author.id}) in #{message.channel}")
                 print(f"Skipping allowlisted link: {url}")
+                increment_stat("allowlist_hits")
                 continue
 
             #only scan embeds once
@@ -464,6 +499,7 @@ async def vt_worker():
                 deferred_messages = scans_in_progress.pop(url, [])
 
                 if detections > 0:
+                    increment_stat("malicious_urls")
                     log_channel = client.get_channel(LOG_CHANNEL_ID)
                     #denylist and save
                     domain = extract_domain(url)
@@ -474,10 +510,12 @@ async def vt_worker():
                     save_json_list(DENYLIST_PATH, DENYLIST)
 
                     log_violation(message.author, url)
+                    increment_stat("violations_logged")
 
                     try:
                         if message.id not in deleted_messages:
                             await message.delete()
+                            increment_stat("messages_deleted")
                             deleted_messages.add(message.id)
                             await check_user_violations(message.author, message.channel)
                     except discord.Forbidden:
@@ -509,8 +547,10 @@ async def vt_worker():
                         try:
                             if msg.id not in deleted_messages:
                                 await msg.delete()
+                                increment_stat("messages_deleted")
                                 deleted_messages.add(msg.id)
                                 log_violation(msg.author, url)
+                                increment_stat("violations_logged")
                                 await msg.channel.send(
                                     f"Malicious link from {msg.author.mention} was removed based on recent scan."
                                 )
@@ -924,17 +964,17 @@ async def violations_show(interaction: discord.Interaction, user: discord.User):
             await interaction.response.send_message(f"No violations recorded for {user.mention}.")
             return
 
-        # Build response
+        #build response
         embed = discord.Embed(
             title=f"Violations for {user}",
             description=f"Total: {len(violations)}",
             color=discord.Color.red()
         )
 
-        for v in violations[:10]:  # first 10 entries
+        for v in violations[:10]:
             embed.add_field(
                 name=v["timestamp"],
-                value=f"[{v['url']}]({v['url']})",
+                value=f"[{v['url']}]",
                 inline=False
             )
 
@@ -995,6 +1035,34 @@ async def ping_command(interaction: discord.Interaction):
 
     #update the message with real data
     await interaction.edit_original_response(content=None, embed=embed)
+
+@tree.command(name="stats", description="Show runtime and historical stats")
+async def stats_command(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+        
+    embed = discord.Embed(
+        title="Bot Stats",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(name="Messages Scanned for URLs", value=str(stats["messages_scanned"]), inline=False)
+    embed.add_field(name="URLs Found", value=str(stats["urls_scanned"]), inline=False)
+    embed.add_field(name="Shorteners Expanded", value=str(stats["shorteners_expanded"]), inline=False)
+
+    embed.add_field(name="Allowlist Hits", value=str(stats["allowlist_hits"]), inline=False)
+    embed.add_field(name="Denylist Hits", value=str(stats["denylist_hits"]), inline=False)
+    embed.add_field(name="Malicious URLs Detected", value=str(stats["malicious_urls"]), inline=False)
+
+    embed.add_field(name="Messages Deleted", value=str(stats["messages_deleted"]), inline=False)
+    embed.add_field(name="Violations Logged", value=str(stats["violations_logged"]), inline=False)
+
+    embed.add_field(name="Allowlist Size", value=str(len(ALLOWLIST)), inline=False)
+    embed.add_field(name="Denylist Size", value=str(len(DENYLIST)), inline=False)
+    embed.add_field(name="Shortener List Size", value=str(len(SHORTENERS)), inline=False)
+
+    await interaction.response.send_message(embed=embed)
 
 @tree.command(name="help", description="Show help and usage info")
 async def help_command(interaction: discord.Interaction):
@@ -1086,8 +1154,8 @@ async def help_command(interaction: discord.Interaction):
 async def on_message(message):
     if message.author.bot:
         return
-
-    content = message.content.strip()
+    
+    increment_stat("messages_scanned")
     if client.user in message.mentions and message.author.guild_permissions.manage_messages:
         if SILLY_MODE:
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
