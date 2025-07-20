@@ -458,10 +458,9 @@ async def scan_worker():
     while True:
         message, url = await scan_queue.get()
         domain = extract_domain(url)
-        deleted = False  #track if message was deleted in this scan
 
         try:
-            if message.author.guild_permissions.manage_messages:
+            if message.author.guild_permissions.manage_messages and not message.webhook_id:
                 log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
                 continue
@@ -1528,29 +1527,13 @@ async def help_command(interaction: discord.Interaction):
 
 @client.event
 async def on_message(message):
-    if message.author.bot:
+    if message.author == client.user:
         return
     
     if message.guild is None:
         await message.channel.send(f"I don't currently support DMs!")
+        return
 
-    if message.attachments:
-        if message.author.guild_permissions.manage_messages:
-            log_info(f"Skipping attachment check for {message.author} due to mod permissions.")
-        else:
-            for attachment in message.attachments:
-                #check if the file extension is in our scannable list
-                if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
-                    #check file size
-                    if attachment.size > MAX_FILE_SIZE:
-                        log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
-                        continue
-                    
-                    increment_stat("attachments_scanned")
-                    #put the message and attachment object into the new queue
-                    await attachment_vt_queue.put((message, attachment))
-                else:
-                    log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
     
     increment_stat("messages_scanned")
     if SILLY_MODE:
@@ -1572,9 +1555,27 @@ async def on_message(message):
     for url in urls:
         await scan_queue.put((message, url))
 
+    if message.attachments:
+        if message.author.guild_permissions.manage_messages and not message.webhook_id:
+            log_info(f"Skipping attachment check for {message.author} due to mod permissions.")
+        else:
+            for attachment in message.attachments:
+                #check if the file extension is in our scannable list
+                if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+                    #check file size
+                    if attachment.size > MAX_FILE_SIZE:
+                        log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
+                        continue
+                    
+                    increment_stat("attachments_scanned")
+                    #put the message and attachment object into the new queue
+                    await attachment_vt_queue.put((message, attachment))
+                else:
+                    log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
+
 @client.event
 async def on_message_edit(before, after):
-    if after.author.bot:
+    if after.author == client.user:
         return
     before_urls = extract_message_urls(before)
     after_urls = extract_message_urls(after)
