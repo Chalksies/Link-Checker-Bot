@@ -487,7 +487,7 @@ async def scan_worker():
                                 f" A message containing \"`{url}`\" was removed due to being denylisted.\n"
                                 f" Message author: {message.author.mention} ({message.author.id})\n"
                                 f" Channel: {message.channel.mention}\n"
-                                f" Timestamp: {datetime.now(timezone.utc).isoformat()}"ü
+                                f" Timestamp: {datetime.now(timezone.utc).isoformat()}"
                             )
                     except discord.NotFound:
                         log_info(f"Message from {message.author} was already removed.")
