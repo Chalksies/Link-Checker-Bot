@@ -472,23 +472,27 @@ async def scan_worker():
             if domain in DENYLIST:
                 if message.id not in deleted_messages:
                     increment_stat("denylist_hits")
-                    await message.delete()
-                    increment_stat("messages_deleted")
-                    deleted_messages.add(message.id)
-                    deleted = True
-                    log_info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
-                    await message.channel.send("A denylisted link was removed.")
-                    log_violation(message.author, url)
-                    increment_stat("violations_logged")
-                    log_channel = client.get_channel(LOG_CHANNEL_ID)
-                    if log_channel:
-                        await log_channel.send(
-                            f" A message containing \"`{url}`\" was removed due to being denylisted.\n"
-                            f" Message author: {message.author.mention} ({message.author.id})\n"
-                            f" Channel: {message.channel.mention}\n"
-                            f" Timestamp: {datetime.now(timezone.utc).isoformat()}"
-                        )
-                continue
+                    try:
+                        await message.delete()
+                        increment_stat("messages_deleted")
+                        deleted_messages.add(message.id)
+                        deleted = True
+                        log_info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
+                        await message.channel.send("A denylisted link was removed.")
+                        log_violation(message.author, url)
+                        increment_stat("violations_logged")
+                        log_channel = client.get_channel(LOG_CHANNEL_ID)
+                        if log_channel:
+                            await log_channel.send(
+                                f" A message containing \"`{url}`\" was removed due to being denylisted.\n"
+                                f" Message author: {message.author.mention} ({message.author.id})\n"
+                                f" Channel: {message.channel.mention}\n"
+                                f" Timestamp: {datetime.now(timezone.utc).isoformat()}"ü
+                            )
+                    except discord.NotFound:
+                        log_info(f"Message from {message.author} was already removed.")
+                        print(f"Message from {message.author} was already removed.")
+                    continue
 
             #allowlist check (skip)
             if domain in ALLOWLIST:
@@ -575,6 +579,9 @@ async def vt_worker():
                                 f"I tried to delete a message with a malicious link but I don't have permissions, {responsible_moderator.mention}!"
                             )
                         continue
+                    except discord.NotFound:
+                            log_info(f"Message from {message.author} was already removed.")
+                            print(f"Message from {message.author} was already removed.")
 
                     else:
                         await message.channel.send(
@@ -605,6 +612,10 @@ async def vt_worker():
                                 )
                                 await check_user_violations(msg.author, msg.channel)
                                 delete_count += 1
+                        except discord.NotFound:
+                            log_info(f"Deferred message from {msg.author} was already removed.")
+                            print(f"Deferred message from {msg.author} was already removed.")
+                            pass
                         except Exception as e:
                             log_warning(f"Failed to delete deferred message: {e}")
                             print(f"Failed to delete deferred message: {e}")
@@ -676,6 +687,9 @@ async def attachment_vt_worker():
                                 f"I tried to delete a message with a malicious attachment but I don't have permissions, {responsible_moderator.mention}!"
                             )
                         continue
+                    except discord.NotFound:
+                        log_info(f"Message from {message.author} was already removed.")
+                        print(f"Message from {message.author} was already removed.")
 
                     await message.channel.send(
                         f"Malicious attachment (`{attachment.filename}`) from {message.author.mention} was removed.\n"
@@ -1457,8 +1471,10 @@ async def help_command(interaction: discord.Interaction):
                 "• `/config show`\n"
                 "• `/config edit`\n"
                 "• `/config reload`\n"
-                "• `/config toggle_debug`"
-
+                "• `/config toggle_debug`\n"
+                "• `/manual check_link`\n"
+                "• `/manual check_file`\n"
+                "• `/stats`"
             ),
             inline=False
         )
@@ -1565,8 +1581,8 @@ async def on_message(message):
         if not urls:
             pass
         else:
-            log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
-            print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions.")
+            log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
+            print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
         
         if message.attachments:
             log_info(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
