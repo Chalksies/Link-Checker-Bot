@@ -1,5 +1,6 @@
 import discord
 from discord import app_commands
+from discord.ui import Button, View
 import re
 import aiohttp
 import asyncio
@@ -69,6 +70,8 @@ DEFAULT_CONFIG = """
 
 DEFAULT_STATS = {
     "messages_scanned": 0,
+    "messages_skipped": 0,
+    "virustotal_scans": 0,
     "urls_scanned": 0,
     "attachments_scanned": 0,
     "malicious_urls": 0,
@@ -216,6 +219,12 @@ def increment_stat(key, amount=1):
     stats[key] = stats.get(key, 0) + amount
     save_stats()
 
+def reset_stats():
+    global stats
+    stats = DEFAULT_STATS.copy()
+    save_stats()
+    log_info("Stats have been reset.")
+
 #queue to control rate-limited api use
 vt_queue = asyncio.Queue()
 scan_queue = asyncio.Queue()
@@ -240,6 +249,7 @@ config_group = app_commands.Group(name="config", description="Manage the bot con
 violations_group = app_commands.Group(name="violations", description="Manage and view link violations")
 debug_group = app_commands.Group(name="debug", description="Debugging tools")
 manual_group = app_commands.Group(name="manual", description="Scan URLs/Attachments manually.")
+stats_group = app_commands.Group(name="stats", description="View and manipulate stats.")
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
@@ -248,6 +258,7 @@ tree.add_command(config_group)
 tree.add_command(violations_group)
 tree.add_command(debug_group)
 tree.add_command(manual_group)
+tree.add_command(stats_group)
 
 def vt_url_id(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
@@ -543,6 +554,7 @@ async def vt_worker():
             deferred_messages = []
 
             try:
+                increment_stat("virustotal_scans")
                 #virustotal scan
                 report = await virustotal_lookup(session, url, message.channel)
                 stats = report["data"]["attributes"]["last_analysis_stats"]
@@ -659,6 +671,7 @@ async def attachment_vt_worker():
             message, attachment = await attachment_vt_queue.get()
             try:
                 log_info(f"Scanning attachment: {attachment.filename} from {message.author} ({message.author.id})")
+                print(f"Scanning attachment: {attachment.filename} from {message.author} ({message.author.id})")
                 
                 #read file content into memory
                 file_bytes = await attachment.read()
@@ -706,6 +719,7 @@ async def attachment_vt_worker():
                         )
                 else:
                     log_info(f"[CLEAN ATTACHMENT] {attachment.filename} had no detections.")
+                    print(f"[CLEAN ATTACHMENT] {attachment.filename} had no detections.")
 
             except Exception as e:
                 log_error(f"[Attachment Worker Error] Failed to scan {attachment.filename}: {e}")
@@ -1010,7 +1024,7 @@ async def shortenerlist_show(interaction: discord.Interaction):
     for embed in embeds:
         await interaction.followup.send(embed=embed)
 
-@shortener_group    .command(name="reload", description="Reload the shortener list from file")
+@shortener_group.command(name="reload", description="Reload the shortener list from file")
 async def shortenerlist_reload(interaction: discord.Interaction):
 
     if interaction.guild is None:
@@ -1412,8 +1426,8 @@ async def ping_command(interaction: discord.Interaction):
     #update the message with real data
     await interaction.edit_original_response(content=None, embed=embed)
 
-@tree.command(name="stats", description="Show runtime and historical stats")
-async def stats_command(interaction: discord.Interaction):
+@stats_group.command(name="show", description="Show stats")
+async def stats_show_command(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
@@ -1424,11 +1438,13 @@ async def stats_command(interaction: discord.Interaction):
     )
 
     embed.add_field(name="Messages Scanned for URLs", value=str(stats["messages_scanned"]), inline=False)
+    embed.add_field(name="Messages Skipped", value=str(stats["messages_skipped"]), inline=False)
     embed.add_field(name="URLs Found", value=str(stats["urls_scanned"]), inline=False)
     
     embed.add_field(name="Shorteners Expanded", value=str(stats["shorteners_expanded"]), inline=False)
     embed.add_field(name="Attachments Scanned", value=str(stats["attachments_scanned"]), inline=False) 
     embed.add_field(name="Malicious Attachments", value=str(stats["malicious_attachments"]), inline=False) 
+    embed.add_field(name="Virustotal Scans", value=str(stats["virustotal_scans"]), inline=False) 
 
     embed.add_field(name="Allowlist Hits", value=str(stats["allowlist_hits"]), inline=False)
     embed.add_field(name="Denylist Hits", value=str(stats["denylist_hits"]), inline=False)
@@ -1442,6 +1458,71 @@ async def stats_command(interaction: discord.Interaction):
     embed.add_field(name="Shortener List Size", value=str(len(SHORTENERS)), inline=False)
 
     await interaction.response.send_message(embed=embed)
+
+@stats_group.command(name="reset", description="Reset stats")
+async def stats_reset_command(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    #define custom view for buttons
+    class ConfirmationView(View):
+        def __init__(self, original_interaction: discord.Interaction):
+            super().__init__(timeout=60)
+            self.original_interaction = original_interaction
+            self.confirmed = False
+
+        @discord.ui.button(label="Yes, I'm sure", style=discord.ButtonStyle.danger)
+        async def confirm_button(self, interaction: discord.Interaction, button: Button):
+            if interaction.user != self.original_interaction.user:
+                await interaction.response.send_message("This isn't your confirmation!", ephemeral=True)
+                return
+
+            self.confirmed = True
+            self.stop()
+
+            #acknowledge the button click immediately
+            await interaction.response.defer()
+            await self.original_interaction.edit_original_response(
+                content="Stats have been reset.",
+                view=None
+            )
+
+            reset_stats()
+            print(f"Stats reset by {interaction.user.name}")
+            log_info(f"Stats reset by {interaction.user.name}")
+
+
+        @discord.ui.button(label="No, cancel", style=discord.ButtonStyle.secondary)
+        async def cancel_button(self, interaction: discord.Interaction, button: Button):
+            if interaction.user != self.original_interaction.user:
+                await interaction.response.send_message("This isn't your cancellation!", ephemeral=True)
+                return
+
+            self.confirmed = False
+            self.stop()
+            await interaction.response.defer()
+
+            await self.original_interaction.edit_original_response(
+                content="Stats reset cancelled.",
+                view=None
+            )
+            print(f"{interaction.user.name} cancelled stats reset.")
+
+        async def on_timeout(self, ):
+            if not self.confirmed:
+                try:
+                    await self.original_interaction.edit_original_response(
+                        content="Confirmation timed out. Stats reset cancelled.",
+                        view=None
+                    )
+                except discord.errors.NotFound:
+                    #interaction might have been deleted by user or bot
+                    pass
+    view = ConfirmationView(interaction)
+    await interaction.response.send_message("Are you sure you want to reset all stats? This action cannot be undone!", view=view)
+
+
 
 @tree.command(name="help", description="Show help and usage info")
 async def help_command(interaction: discord.Interaction):
@@ -1474,6 +1555,7 @@ async def help_command(interaction: discord.Interaction):
                 "• `/config toggle_debug`\n"
                 "• `/manual check_link`\n"
                 "• `/manual check_file`\n"
+                "• `/violations show <user>\n"
                 "• `/stats`"
             ),
             inline=False
@@ -1578,6 +1660,7 @@ async def on_message(message):
 
     if message.author.guild_permissions.manage_messages:
         urls = extract_message_urls(message)
+        increment_stat("messages_skipped")
         if not urls:
             pass
         else:
@@ -1600,6 +1683,7 @@ async def on_message(message):
                 if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
                     if attachment.size > MAX_FILE_SIZE:
                         log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
+                        print(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
                         continue
                     
                     increment_stat("attachments_scanned")
