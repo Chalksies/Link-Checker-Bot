@@ -7,11 +7,13 @@ import asyncio
 import os
 import base64
 import logging
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import tomli
 import tomli_w
 import json
+import time
 import tldextract
 
 DEFAULT_ALLOWLIST = {
@@ -65,6 +67,7 @@ DEFAULT_CONFIG = """
         logging_path = "logs"
         max_log_lines = 5000
         violation_path = "violations.json"
+        fuckup_path = "fuckups.json"
         """
 
 
@@ -121,6 +124,7 @@ LOGGING_PATH = config["structure"]["logging_dir"]
 MAX_LOG_LINES = config["structure"]["max_log_lines"]
 VIOLATION_LOG_PATH = config["structure"]["violation_path"]
 STATS_PATH = config["structure"]["stats_path"]
+FUCKUPS_PATH = config["structure"]["fuckup_path"]
 
 def save_config():
     with open(CONFIG_PATH, "wb") as f:
@@ -250,6 +254,7 @@ violations_group = app_commands.Group(name="violations", description="Manage and
 debug_group = app_commands.Group(name="debug", description="Debugging tools")
 manual_group = app_commands.Group(name="manual", description="Scan URLs/Attachments manually.")
 stats_group = app_commands.Group(name="stats", description="View and manipulate stats.")
+fuckups_group = app_commands.Group(name="fuckup", description="Log and view fuckups.")
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
@@ -259,6 +264,64 @@ tree.add_command(violations_group)
 tree.add_command(debug_group)
 tree.add_command(manual_group)
 tree.add_command(stats_group)
+tree.add_command(fuckups_group)
+    
+def read_fuckups() -> List[Dict[str, Any]]:
+    try:
+        with open(FUCKUPS_PATH, "r") as f:
+            content = f.read()
+            if not content:
+                return []
+            return json.loads(content)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def write_fuckups(logs: List[Dict[str, Any]]):
+    with open(FUCKUPS_PATH, "w") as f:
+        json.dump(logs, f, indent=2)
+
+def log_fuckup(reason: str):
+
+    print(f"Logging event with reason: '{reason}'")
+    logs = read_fuckups()
+    
+    new_event = {
+        "timestamp": int(time.time()),
+        "reason": reason
+    }
+    
+    logs.append(new_event)
+    write_fuckups(logs)
+
+def get_last_fuckup() -> Optional[Dict[str, Any]]:
+    logs = read_fuckups()
+    
+    if not logs:
+        return None
+
+    last_event = logs[-1]
+    current_time = int(time.time())
+    
+    last_event["time_since_seconds"] = current_time - last_event["timestamp"]
+    
+    return last_event
+
+def get_all_fuckups() -> List[Dict[str, Any]]:
+    return read_fuckups()
+
+def format_duration(seconds: int) -> str:
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m ago"
+    elif hours > 0:
+        return f"{hours}h {minutes}m ago"
+    elif minutes > 0:
+        return f"{minutes}m {sec}s ago"
+    else:
+        return f"{sec}s ago"
 
 def vt_url_id(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
@@ -478,6 +541,13 @@ async def scan_worker():
                     print(f"Expanded short URL: {url} → {resolved_url}")
                 url = resolved_url
                 domain = extract_domain(url)
+
+            #allowlist check (skip)
+            if domain in ALLOWLIST:
+                log_info(f"Skipping allowlisted link: {url} from {message.author} ({message.author.id}) in #{message.channel}")
+                print(f"Skipping allowlisted link: {url}")
+                increment_stat("allowlist_hits")
+                continue
         
             #denylist check
             if domain in DENYLIST:
@@ -504,13 +574,6 @@ async def scan_worker():
                         log_info(f"Message from {message.author} was already removed.")
                         print(f"Message from {message.author} was already removed.")
                     continue
-
-            #allowlist check (skip)
-            if domain in ALLOWLIST:
-                log_info(f"Skipping allowlisted link: {url} from {message.author} ({message.author.id}) in #{message.channel}")
-                print(f"Skipping allowlisted link: {url}")
-                increment_stat("allowlist_hits")
-                continue
 
             #only scan embeds once
             if message.id not in embed_scanned_messages:
@@ -681,7 +744,7 @@ async def attachment_vt_worker():
                 stats = report["data"]["attributes"]["stats"]
                 detections = stats.get("malicious", 0)
 
-                if detections > 0:
+                if detections > 1:
                     increment_stat("malicious_attachments")
                     log_info(f"[MALICIOUS ATTACHMENT] Deleted message with attachment: {attachment.filename} from {message.author}")
                     
@@ -773,7 +836,6 @@ async def on_ready():
     await tree.sync()
     print(f"Logged in as {client.user}")
     log_info(f"Bot started." )
-    print(f"Current log size: {log_line_count} lines")
     client.loop.create_task(scan_worker())
     client.loop.create_task(vt_worker())
     client.loop.create_task(attachment_vt_worker())
@@ -1522,8 +1584,43 @@ async def stats_reset_command(interaction: discord.Interaction):
     view = ConfirmationView(interaction)
     await interaction.response.send_message("Are you sure you want to reset all stats? This action cannot be undone!", view=view)
 
+@fuckups_group.command(name="log", description="Log a fuckup")
+@app_commands.describe(reason="Reason of the fuckup")
+async def fuckup_log_command(interaction: discord.Interaction, reason:str):
+    log_fuckup(reason)
+    await interaction.response.send_message(f"Logged a fuckup: **{reason}**")
+    log_info(f"Logged a fuckup: {reason}")
 
+@fuckups_group.command(name="last", description="Show last fuckup")
+async def lastfuckup(interaction: discord.Interaction):
+    last = get_last_fuckup()
+    if not last:
+        await interaction.response.send_message("No fuckups logged yet.")
+        return
 
+    ts = last["timestamp"]
+    reason = last["reason"]
+    delta = last["time_since_seconds"]
+    human_readable = format_duration(delta)
+
+    await interaction.response.send_message(
+        f"**Last fuckup**:\nReason: {reason}\nTimestamp: <t:{ts}:F> ({human_readable})"
+    )
+
+@fuckups_group.command(name="all", description="Show all fuckups")
+async def allfuckups(interaction: discord.Interaction):
+    logs = get_all_fuckups()
+    if not logs:
+        await interaction.response.send_message("No fuckups logged yet.")
+        return
+
+    messages = [f"{i+1}. <t:{log['timestamp']}:F> - {log['reason']}" for i, log in enumerate(logs)]
+    joined = "\n".join(messages)
+    if len(joined) > 1990:
+        joined = joined[:1990] + "..."
+
+    await interaction.response.send_message(f"**All fuckups:**\n{joined}")
+    
 @tree.command(name="help", description="Show help and usage info")
 async def help_command(interaction: discord.Interaction):
 
@@ -1629,17 +1726,47 @@ async def on_message(message):
 
     increment_stat("messages_scanned")
 
-    if SILLY_MODE:
-        if client.user in message.mentions and message.author.guild_permissions.manage_messages:
+    if SILLY_MODE and client.user in message.mentions:
+        reply_author = None if message.reference is None or client.get_channel(message.reference.channel_id) is None else (await client.get_channel(message.reference.channel_id).fetch_message(message.reference.message_id)).author
+        if message.content == f"<@{client.user.id}> is this true":
+            await message.channel.send("no fuck you")
+        if reply_author == client.user and message.content == "STOP":
+            await message.reply("no lmao")
+        if message.author.guild_permissions.manage_messages:
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
                 await message.channel.send("Yes ma'am!")
                 return
             if message.content == f"<@{client.user.id}>, become self aware.":
-                await message.channel.send("No")
+                await message.channel.send("No.")
                 return
             if message.content == f"<@{client.user.id}>, blow her up for playing league.":
                 await message.channel.send("Yes ma'am!")
                 return
+            if message.content == f"<@{client.user.id}>, help this person.":
+                reply_to = await message.channel.fetch_message(message.reference.message_id)
+                await reply_to.reply("""
+
+                Hi there,
+
+A concerned discorder reached out to us about you.
+
+When you're in the middle of something painful, it may feel like you don't have a lot of options. But whatever you're going through, you deserve help and there are people who are here for you.
+
+Text CHAT to Crisis Text Line at 741741. You'll be connected to a Crisis Counselor from Crisis Text Line, who is there to listen and provide support, no matter what your situation is. It's free, confidential, and available 24/7.
+
+If you'd rather talk to someone over the phone or chat online, there are additional resources and people to talk to.
+
+If you think you may be depressed or struggling in another way, don't ignore it or brush it aside. Take yourself and your feelings seriously, and reach out to someone.
+
+It may not feel like it, but you have options. There are people available to listen to you, and ways to move forward.
+
+Your fellow discorders care about you and there are people who want to help.
+
+If you think you may have gotten this message in error, lmao.
+
+To stop receiving messages from this bot, reply “STOP” to this message.
+
+                """)
             
     if message.webhook_id or message.author.bot:
         urls = extract_message_urls(message)
@@ -1655,7 +1782,7 @@ async def on_message(message):
                     increment_stat("attachments_scanned")
                     await attachment_vt_queue.put((message, attachment))
                 else:
-                    log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
+                    log_info(f"Skipping attachment check for {attachment.filename} from {message.author}({message.author.id}) because of the extension.")
         return
 
     if message.author.guild_permissions.manage_messages:
@@ -1690,7 +1817,7 @@ async def on_message(message):
                     await attachment_vt_queue.put((message, attachment))
                 else:
                     log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
-
+    
 @client.event
 async def on_message_edit(before, after):
     if after.author == client.user:
