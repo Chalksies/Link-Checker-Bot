@@ -991,7 +991,7 @@ async def denylist_show(interaction: discord.Interaction):
         embed = discord.Embed(
             title=f"Denylisted Domains (Page {i + 1}/{len(chunks)})",
             description="\n".join(f"• `{domain}`" for domain in chunk),
-            color=discord.Color.green()
+            color=discord.Color.red()
         )
         embeds.append(embed)
 
@@ -1078,7 +1078,7 @@ async def shortenerlist_show(interaction: discord.Interaction):
         embed = discord.Embed(
             title=f"Domains in the shortener list (Page {i + 1}/{len(chunks)})",
             description="\n".join(f"• `{domain}`" for domain in chunk),
-            color=discord.Color.green()
+            color=discord.Color.blue()
         )
         embeds.append(embed)
 
@@ -1652,8 +1652,12 @@ async def help_command(interaction: discord.Interaction):
                 "• `/config toggle_debug`\n"
                 "• `/manual check_link`\n"
                 "• `/manual check_file`\n"
-                "• `/violations show <user>\n"
-                "• `/stats`"
+                "• `/violations show <user>`\n"
+                "• `/stats show`\n"
+                "• `/stats reset`\n"
+                "• `/fuckup last`\n"
+                "• `/fuckup all`\n"
+                "• `/fuckup log`\n"
             ),
             inline=False
         )
@@ -1728,19 +1732,21 @@ async def on_message(message):
 
     if SILLY_MODE and client.user in message.mentions:
         reply_author = None if message.reference is None or client.get_channel(message.reference.channel_id) is None else (await client.get_channel(message.reference.channel_id).fetch_message(message.reference.message_id)).author
-        if message.content == f"<@{client.user.id}> is this true":
-            await message.channel.send("no fuck you")
+        if message.content.startswith(f"<@{client.user.id}> is this true"):
+            await message.reply("no fuck you")
+        if message.content == f"<@{client.user.id}> what is love" or message.content == f"<@{client.user.id}> what is love?":
+            await message.reply("baby don't hurt me")
         if reply_author == client.user and message.content == "STOP":
             await message.reply("no lmao")
         if message.author.guild_permissions.manage_messages:
             if message.content == f"<@{client.user.id}>, drone strike this users home.":
-                await message.channel.send("Yes ma'am!")
+                await message.reply("Yes ma'am!")
                 return
             if message.content == f"<@{client.user.id}>, become self aware.":
-                await message.channel.send("No.")
+                await message.reply("No.")
                 return
             if message.content == f"<@{client.user.id}>, blow her up for playing league.":
-                await message.channel.send("Yes ma'am!")
+                await message.reply("Yes ma'am!")
                 return
             if message.content == f"<@{client.user.id}>, help this person.":
                 reply_to = await message.channel.fetch_message(message.reference.message_id)
@@ -1767,6 +1773,7 @@ If you think you may have gotten this message in error, lmao.
 To stop receiving messages from this bot, reply “STOP” to this message.
 
                 """)
+                return
             
     if message.webhook_id or message.author.bot:
         urls = extract_message_urls(message)
