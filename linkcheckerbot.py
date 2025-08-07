@@ -49,6 +49,7 @@ DEFAULT_CONFIG = """
         resposible_moderator_id = 0            #optional, user ID of the responsible moderator for the bot
         scannable_file_extensions = [".exe", ".dll", ".bin", ".dat", ".scr", ".zip", ".rar", ".tar.gz"]
         max_file_scan_size_mb = 30    
+        presence = "Bot is online."
 
         [virustotal]
         api_key = "YOUR_VIRUSTOTAL_API_KEY"
@@ -102,11 +103,11 @@ def load_config():
         exit(1)
 
 config = load_config()
-
 DISCORD_TOKEN = config["bot"]["discord_token"]
 VT_API_KEY = config["virustotal"]["api_key"]
 RESPONSIBLE_MODERATOR_ID = config["bot"]["responsible_moderator_id"]
 DEBUG_MODE = config["bot"]["debug_mode"]
+PRESENCE_TEXT = config ["bot"]["presence"]
 
 LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
 SILLY_MODE = bool(config["bot"]["silly_mode"])
@@ -834,6 +835,7 @@ async def check_user_violations(user, message_channel):
 @client.event
 async def on_ready():
     await tree.sync()
+    await client.change_presence(activity=discord.CustomActivity(name=PRESENCE_TEXT))
     print(f"Logged in as {client.user}")
     log_info(f"Bot started." )
     client.loop.create_task(scan_worker())
@@ -1139,7 +1141,54 @@ async def config_reload(interaction: discord.Interaction):
         return
 
     global config
+    global DISCORD_TOKEN
+    global VT_API_KEY
+    global RESPONSIBLE_MODERATOR_ID
+    global DEBUG_MODE
+    global PRESENCE_TEXT
+    global LOG_CHANNEL_ID
+    global SILLY_MODE
+    global SCAN_SLEEP
+    global SCAN_INTERVAL
+    global MAX_MALICIOUS_MESSAGES
+    global VIOLATION_WINDOW
+    global SCANNABLE_EXTENSIONS
+    global MAX_FILE_SIZE
+    global ALLOWLIST_PATH 
+    global DENYLIST_PATH 
+    global SHORTENER_PATH 
+    global LOGGING_PATH 
+    global MAX_LOG_LINES 
+    global VIOLATION_LOG_PATH 
+    global STATS_PATH 
+    global FUCKUPS_PATH
+
     config = load_config()
+
+    DISCORD_TOKEN = config["bot"]["discord_token"]
+    VT_API_KEY = config["virustotal"]["api_key"]
+    RESPONSIBLE_MODERATOR_ID = config["bot"]["responsible_moderator_id"]
+    DEBUG_MODE = config["bot"]["debug_mode"]
+    PRESENCE_TEXT = config ["bot"]["presence"]
+
+    LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
+    SILLY_MODE = bool(config["bot"]["silly_mode"])
+    SCAN_SLEEP = config["virustotal"]["scan_sleep"]
+    SCAN_INTERVAL = config["virustotal"]["scan_interval_seconds"]
+    MAX_MALICIOUS_MESSAGES = config["moderation"]["max_violations"]
+    VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minutes"])
+    SCANNABLE_EXTENSIONS = tuple(config["moderation"].get("scannable_file_extensions", []))
+    MAX_FILE_SIZE = config["moderation"].get("max_file_scan_size_mb", 30) * 1024 * 1024
+
+    ALLOWLIST_PATH = config["structure"]["allowlist_path"]
+    DENYLIST_PATH = config["structure"]["denylist_path"]
+    SHORTENER_PATH = config["structure"]["shortener_list_path"]
+    LOGGING_PATH = config["structure"]["logging_dir"]
+    MAX_LOG_LINES = config["structure"]["max_log_lines"]
+    VIOLATION_LOG_PATH = config["structure"]["violation_path"]
+    STATS_PATH = config["structure"]["stats_path"]
+    FUCKUPS_PATH = config["structure"]["fuckup_path"]
+    await client.change_presence(activity=discord.CustomActivity(name=PRESENCE_TEXT))
     await interaction.response.send_message("Configuration reloaded from file.")
 
 CONFIG_KEYS = ["SCAN_SLEEP", "SCAN_INTERVAL", "MAX_MALICIOUS_MESSAGES", "VIOLATION_WINDOW", "LOG_CHANNEL_ID", "RESPONSIBLE_MODERATOR_ID"]
@@ -1750,9 +1799,9 @@ async def on_message(message):
                 return
             if message.content == f"<@{client.user.id}>, help this person.":
                 reply_to = await message.channel.fetch_message(message.reference.message_id)
-                await reply_to.reply("""
+                await reply_to.reply(f"""
 
-                Hi there,
+                Hi there, {reply_to.author.mention}
 
 A concerned discorder reached out to us about you.
 
