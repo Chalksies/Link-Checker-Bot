@@ -60,6 +60,7 @@ DEFAULT_CONFIG = """
         log_channel_id = 0                 #channel ID for the bot to log its actions
         max_violations = 3
         violation_window_minutes = 2
+        threshold = 2
 
         [structure]
         allowlist_path = "allowlist.json"
@@ -117,6 +118,7 @@ MAX_MALICIOUS_MESSAGES = config["moderation"]["max_violations"]
 VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minutes"])
 SCANNABLE_EXTENSIONS = tuple(config["moderation"].get("scannable_file_extensions", []))
 MAX_FILE_SIZE = config["moderation"].get("max_file_scan_size_mb", 30) * 1024 * 1024
+DELETION_THRESHOLD = config["moderation"]["threshold"]
 
 ALLOWLIST_PATH = config["structure"]["allowlist_path"]
 DENYLIST_PATH = config["structure"]["denylist_path"]
@@ -627,7 +629,7 @@ async def vt_worker():
                 #always clean up the currently being scanned queue
                 deferred_messages = scans_in_progress.pop(url, [])
 
-                if detections > 0:
+                if detections >= DELETION_THRESHOLD:
                     increment_stat("malicious_urls")
                     log_channel = client.get_channel(LOG_CHANNEL_ID)
                     #denylist and save
@@ -1162,6 +1164,7 @@ async def config_reload(interaction: discord.Interaction):
     global VIOLATION_LOG_PATH 
     global STATS_PATH 
     global FUCKUPS_PATH
+    global DELETION_THRESHOLD
 
     config = load_config()
 
@@ -1179,6 +1182,7 @@ async def config_reload(interaction: discord.Interaction):
     VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minutes"])
     SCANNABLE_EXTENSIONS = tuple(config["moderation"].get("scannable_file_extensions", []))
     MAX_FILE_SIZE = config["moderation"].get("max_file_scan_size_mb", 30) * 1024 * 1024
+    DELETION_THRESHOLD = config["moderation"]["threshold"]
 
     ALLOWLIST_PATH = config["structure"]["allowlist_path"]
     DENYLIST_PATH = config["structure"]["denylist_path"]
@@ -1191,7 +1195,7 @@ async def config_reload(interaction: discord.Interaction):
     await client.change_presence(activity=discord.CustomActivity(name=PRESENCE_TEXT))
     await interaction.response.send_message("Configuration reloaded from file.")
 
-CONFIG_KEYS = ["SCAN_SLEEP", "SCAN_INTERVAL", "MAX_MALICIOUS_MESSAGES", "VIOLATION_WINDOW", "LOG_CHANNEL_ID", "RESPONSIBLE_MODERATOR_ID"]
+CONFIG_KEYS = ["SCAN_SLEEP", "SCAN_INTERVAL", "MAX_MALICIOUS_MESSAGES", "VIOLATION_WINDOW", "LOG_CHANNEL_ID", "RESPONSIBLE_MODERATOR_ID", "DELETION_THRESHOLD"]
 
 async def config_key_autocomplete(interaction: discord.Interaction, current: str):
     return [
@@ -1242,6 +1246,10 @@ async def config_edit(interaction: discord.Interaction, key: str, value: str):
         global RESPONSIBLE_MODERATOR_ID
         RESPONSIBLE_MODERATOR_ID = int(value)
         config["bot"]["responsible_moderator_id"] = RESPONSIBLE_MODERATOR_ID
+    elif key == "deletion_threshold":
+        global DELETION_THRESHOLD
+        DELETION_THRESHOLD = int(value)
+        config["moderation"]["threshold"] = DELETION_THRESHOLD
     else:
         await interaction.response.send_message(
             f"Unknown config key: `{key}`\n"
