@@ -1,5 +1,6 @@
 discord
 tomli
+tomli_w
 aiohttp
 asyncio
 logging

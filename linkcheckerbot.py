@@ -177,6 +177,8 @@ if os.path.exists(latest_log_path):
         log_line_count = sum(1 for _ in f)
 else:
     log_line_count = 0
+    with open(latest_log_path, "w", encoding="utf-8") as f:
+        pass
 
 def log_and_rotate(message: str, level=logging.INFO):
     global log_line_count, log_file_handler
