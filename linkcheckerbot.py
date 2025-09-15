@@ -23,7 +23,6 @@ DEFAULT_ALLOWLIST = {
         "youtube.com",
         "youtu.be",
         "google.com",
-        "github.com",
         "tenor.com",
         "wikipedia.org"
     ]
