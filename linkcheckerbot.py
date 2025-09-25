@@ -41,34 +41,35 @@ DEFAULT_SHORTENERS = {
 }
 
 DEFAULT_CONFIG = """
-        [bot]
-        discord_token = "YOUR_DISCORD_TOKEN"
-        silly_mode = false
-        debug_mode = false
-        resposible_moderator_id = 0            #optional, user ID of the responsible moderator for the bot
-        scannable_file_extensions = [".exe", ".dll", ".bin", ".dat", ".scr", ".zip", ".rar", ".tar.gz"]
-        max_file_scan_size_mb = 30    
-        presence = "Bot is online."
+[bot]
+discord_token = "YOUR_DISCORD_TOKEN"
+silly_mode = false
+debug_mode = false
+resposible_moderator_id = 0            #optional, user ID of the responsible moderator for the bot
+scannable_file_extensions = [".exe", ".dll", ".bin", ".dat", ".scr", ".zip", ".rar", ".tar.gz"]
+max_file_scan_size_mb = 30    
+presence = "Bot is online."
 
-        [virustotal]
-        api_key = "YOUR_VIRUSTOTAL_API_KEY"
-        scan_sleep = 15
-        scan_interval_seconds = 5
+[virustotal]
+api_key = "YOUR_VIRUSTOTAL_API_KEY"
+scan_sleep = 15
+scan_interval_seconds = 5
 
-        [moderation]
-        log_channel_id = 0                 #channel ID for the bot to log its actions
-        max_violations = 3
-        violation_window_minutes = 2
-        threshold = 2
+[moderation]
+log_channel_id = 0                 #channel ID for the bot to log its actions
+max_violations = 3
+violation_window_minutes = 2
+threshold = 2
 
-        [structure]
-        allowlist_path = "allowlist.json"
-        denylist_path = "denylist.json"
-        shortener_list_path = "shortener.json"
-        logging_path = "logs"
-        max_log_lines = 5000
-        violation_path = "violations.json"
-        fuckup_path = "fuckups.json"
+[structure]
+allowlist_path = "allowlist.json"
+denylist_path = "denylist.json"
+shortener_list_path = "shortener.json"
+logging_dir = "logs"
+max_log_lines = 5000
+violation_path = "violations.json"
+stats_path = "stats.json"
+fuckup_path = "fuckups.json"
         """
 
 
