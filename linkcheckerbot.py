@@ -1793,7 +1793,7 @@ async def on_message(message):
         reply_author = None if message.reference is None or client.get_channel(message.reference.channel_id) is None else (await client.get_channel(message.reference.channel_id).fetch_message(message.reference.message_id)).author
         if reply_author == client.user and message.content == "STOP":
             await message.reply("no lmao")
-        if message.author.guild_permissions.manage_messages:
+        if message.author.guild_permissions.manage_messages or message.author.id == "446447196607348746":
             if message.content.startswith(f"<@{client.user.id}> is this true"):
                 await message.reply("no fuck you")
             if message.content == f"<@{client.user.id}> what is love" or message.content == f"<@{client.user.id}> what is love?":
