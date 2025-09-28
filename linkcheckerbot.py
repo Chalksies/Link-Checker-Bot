@@ -60,6 +60,8 @@ log_channel_id = 0                 #channel ID for the bot to log its actions
 max_violations = 3
 violation_window_minutes = 2
 threshold = 2
+verified_role_name = "Verified"    #role name for verified users. has no effect on scanning
+member_role_name = "Member"      #role name for member users. has no effect on scanning.
 
 [structure]
 allowlist_path = "allowlist.json"
@@ -129,6 +131,9 @@ VIOLATION_LOG_PATH = config["structure"]["violation_path"]
 STATS_PATH = config["structure"]["stats_path"]
 FUCKUPS_PATH = config["structure"]["fuckup_path"]
 
+VERIFIED_ROLE_NAME = config["moderation"]["verified_role_name"]
+MEMBER_ROLE_NAME = config["moderation"]["member_role_name"]
+
 def save_config():
     with open(CONFIG_PATH, "wb") as f:
         tomli_w.dump(config, f)
@@ -171,6 +176,8 @@ console_handler.setFormatter(log_formatter)
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 logger.addHandler(log_file_handler)
+
+lockdowns: dict[int, dict, dict, dict] = {}
 
 if os.path.exists(latest_log_path):
     with open(latest_log_path, "r", encoding="utf-8") as f:
@@ -260,6 +267,7 @@ debug_group = app_commands.Group(name="debug", description="Debugging tools")
 manual_group = app_commands.Group(name="manual", description="Scan URLs/Attachments manually.")
 stats_group = app_commands.Group(name="stats", description="View and manipulate stats.")
 fuckups_group = app_commands.Group(name="fuckup", description="Log and view fuckups.")
+moderation_group = app_commands.Group(name="moderate", description="Moderate users anc channels.")
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
@@ -270,7 +278,8 @@ tree.add_command(debug_group)
 tree.add_command(manual_group)
 tree.add_command(stats_group)
 tree.add_command(fuckups_group)
-    
+tree.add_command(moderation_group)
+
 def read_fuckups() -> List[Dict[str, Any]]:
     try:
         with open(FUCKUPS_PATH, "r") as f:
@@ -834,6 +843,23 @@ async def check_user_violations(user, message_channel):
                 )
         
         log_info(f"User {user} exceeded malicious message threshold.")
+
+DURATION_RE = re.compile(r"^(\d+)([smhd])$")
+
+def parse_duration(s: str) -> int:
+    m = DURATION_RE.match(s.lower().strip())
+    if not m:
+        raise ValueError("Bad duration format! Use like 10s, 5m, 2h, 1d")
+    val, unit = int(m.group(1)), m.group(2)
+    if unit == "s":
+        return val
+    if unit == "m":
+        return val * 60
+    if unit == "h":
+        return val * 3600
+    if unit == "d":
+        return val * 86400
+    raise ValueError("Unknown unit!")
 
 #----------------------- bot stuff -----------------------
 @client.event
@@ -1775,6 +1801,133 @@ async def help_command(interaction: discord.Interaction):
     )
 
     await interaction.response.send_message(embed=embed)
+
+@moderation_group.command(name="lockdown", description="Initiate a channel lockdown.")
+@app_commands.describe(duration="How long to lock the channel (10s, 5m, 2h, 1d)", reason="Reason for the lockdown")
+async def lockdown(interaction: discord.Interaction, duration: str, reason: str = "No reason provided"):
+
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+    
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You are not authroized to do this.")
+        return
+    
+    try:
+        seconds = parse_duration(duration)
+    except ValueError as e:
+        await interaction.response.send_message(str(e), ephemeral=True)
+        return
+    
+    channel = interaction.channel
+    everyone = interaction.guild.default_role
+    member_role = discord.utils.get(interaction.guild.roles, name=MEMBER_ROLE_NAME)
+    verified_role = discord.utils.get(interaction.guild.roles, name=VERIFIED_ROLE_NAME)
+
+
+    if channel.id in lockdowns:
+        await interaction.response.send_message("This channel is already locked.", ephemeral=True)
+        return
+
+    prev_everyone = channel.overwrites_for(everyone)
+    prev_member = channel.overwrites_for(member_role) if member_role else None
+    prev_verified = channel.overwrites_for(verified_role) if verified_role else None
+
+    overwrite_everyone = prev_everyone
+    overwrite_everyone.send_messages = False
+    await channel.set_permissions(everyone, overwrite=overwrite_everyone, reason=f"Lockdown by {interaction.user} - {reason}")
+
+    overwrite_member = prev_member
+    overwrite_member.send_messages = False
+    if member_role:
+        await channel.set_permissions(member_role, overwrite=overwrite_member, reason=f"Lockdown by {interaction.user} - {reason}")
+
+    overwrite_verified = prev_verified
+    overwrite_verified.send_messages = False
+    if verified_role:
+        await channel.set_permissions(verified_role, overwrite=overwrite_verified, reason=f"Lockdown by {interaction.user} - {reason}")
+
+    await interaction.response.send_message(f"Channel locked for {duration}. Reason: {reason}")
+    if LOG_CHANNEL_ID:
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            await log_channel.send(f"Channel {channel.mention} locked by {interaction.user.mention} for {duration}. Reason: {reason}")
+
+    async def auto_unlock():
+        try:
+            await asyncio.sleep(seconds)
+            # restore permissions
+            if prev_everyone is None:
+                await channel.set_permissions(everyone, overwrite=None, reason="Lockdown expired")
+            else:
+                await channel.set_permissions(everyone, overwrite=prev_everyone, reason="Lockdown expired")
+
+            if member_role:
+                if prev_member is None:
+                    await channel.set_permissions(member_role, overwrite=None, reason="Lockdown expired")
+                else:
+                    await channel.set_permissions(member_role, overwrite=prev_member, reason="Lockdown expired")
+
+            if verified_role:
+                if prev_verified is None:
+                    await channel.set_permissions(verified_role, overwrite=None, reason="Lockdown expired")
+                else:
+                    await channel.set_permissions(verified_role, overwrite=prev_verified, reason="Lockdown expired")
+
+            await channel.send("Lockdown expired, channel unlocked.")
+        finally:
+            lockdowns.pop(channel.id, None)
+
+    task = asyncio.create_task(auto_unlock())
+    lockdowns[channel.id] = {"task": task, "previous_overwrite_everyone": prev_everyone, "previous_overwrite_member": prev_member, "previous_overwrite_verified": prev_verified}
+
+@moderation_group.command(name="unlock", description="Manually unlock the channel early.")
+async def unlock(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("I don't currently support DMs!")
+        return
+
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You are not authorized to do this.")
+        return
+
+    channel = interaction.channel
+    data = lockdowns.pop(channel.id, None)
+    if not data:
+        await interaction.response.send_message("This channel is not locked.", ephemeral=True)
+        return
+
+    if data["task"]:
+        data["task"].cancel()
+
+    everyone = interaction.guild.default_role
+    member_role = discord.utils.get(interaction.guild.roles, name=MEMBER_ROLE_NAME)
+    verified_role = discord.utils.get(interaction.guild.roles, name=VERIFIED_ROLE_NAME)
+
+    prev_everyone = data.get("previous_overwrite_everyone")
+    prev_member = data.get("previous_overwrite_member")
+    prev_verified = data.get("previous_overwrite_verified")
+
+    if prev_everyone is None:
+        await channel.set_permissions(everyone, overwrite=None, reason=f"Manual unlock by {interaction.user}")
+    else:
+        await channel.set_permissions(everyone, overwrite=prev_everyone, reason=f"Manual unlock by {interaction.user}")
+
+    if member_role:
+        if prev_member is None:
+            await channel.set_permissions(member_role, overwrite=None, reason=f"Manual unlock by {interaction.user}")
+        else:
+            await channel.set_permissions(member_role, overwrite=prev_member, reason=f"Manual unlock by {interaction.user}")
+    
+    if verified_role:
+        if prev_verified is None:
+            await channel.set_permissions(verified_role, overwrite=None, reason=f"Manual unlock by {interaction.user}")
+        else:
+            await channel.set_permissions(verified_role, overwrite=prev_verified, reason=f"Manual unlock by {interaction.user}")
+
+    await interaction.response.send_message("Channel manually unlocked.")
 
 #----------------------- message handling -----------------------
 
