@@ -1,5 +1,5 @@
 import discord
-from discord import app_commands
+from discord import app_commands, PermissionOverwrite
 from discord.ui import Button, View
 import re
 import aiohttp
@@ -15,6 +15,7 @@ import tomli_w
 import json
 import time
 import tldextract
+
 
 DEFAULT_ALLOWLIST = {
     "domains": [
@@ -1831,22 +1832,37 @@ async def lockdown(interaction: discord.Interaction, duration: str, reason: str 
         await interaction.response.send_message("This channel is already locked.", ephemeral=True)
         return
 
+
     prev_everyone = channel.overwrites_for(everyone)
     prev_member = channel.overwrites_for(member_role) if member_role else None
     prev_verified = channel.overwrites_for(verified_role) if verified_role else None
 
-    overwrite_everyone = prev_everyone
+
+    # avoid mutating the original overwrites
+    if prev_everyone is not None:
+        overwrite_everyone = PermissionOverwrite(**dict(prev_everyone))
+    else:
+        overwrite_everyone = PermissionOverwrite()
     overwrite_everyone.send_messages = False
+    overwrite_everyone.send_messages_in_threads = False
     await channel.set_permissions(everyone, overwrite=overwrite_everyone, reason=f"Lockdown by {interaction.user} - {reason}")
 
-    overwrite_member = prev_member
-    overwrite_member.send_messages = False
     if member_role:
+        if prev_member is not None:
+            overwrite_member = PermissionOverwrite(**dict(prev_member))
+        else:
+            overwrite_member = PermissionOverwrite()
+        overwrite_member.send_messages = False
+        overwrite_member.send_messages_in_threads = False
         await channel.set_permissions(member_role, overwrite=overwrite_member, reason=f"Lockdown by {interaction.user} - {reason}")
 
-    overwrite_verified = prev_verified
-    overwrite_verified.send_messages = False
     if verified_role:
+        if prev_verified is not None:
+            overwrite_verified = PermissionOverwrite(**dict(prev_verified))
+        else:
+            overwrite_verified = PermissionOverwrite()
+        overwrite_verified.send_messages = False
+        overwrite_verified.send_messages_in_threads = False
         await channel.set_permissions(verified_role, overwrite=overwrite_verified, reason=f"Lockdown by {interaction.user} - {reason}")
 
     await interaction.response.send_message(f"Channel locked for {duration}. Reason: {reason}")
