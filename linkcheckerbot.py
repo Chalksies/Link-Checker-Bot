@@ -1960,7 +1960,7 @@ async def panic_stop(interaction: discord.Interaction):
     if LOG_CHANNEL_ID:
         guild = interaction.guild
         log_channel = guild.get_channel(LOG_CHANNEL_ID)
-        responsible_mod_ping = guild.get_member(RESPONSIBLE_MODERATOR_ID)
+        responsible_mod_ping = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
         if log_channel:
             await log_channel.send(f"{responsible_mod_ping.mention} Panic stop initiated by {interaction.user.mention} ({interaction.user.id}).")
     await client.close()
