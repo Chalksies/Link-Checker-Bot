@@ -1945,6 +1945,29 @@ async def unlock(interaction: discord.Interaction):
 
     await interaction.response.send_message("Channel manually unlocked.")
 
+@tree.command(name="panic_stop", description="Panic stop the bot (logout and stop all operations).")
+async def panic_stop(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("I don't currently support DMs!")
+        return
+
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You are not authorized to do this.", ephemeral=True)
+        return
+
+    await interaction.response.send_message("Panic stop initiated. Logging out and stopping all operations.")
+    log_info(f"Panic stop initiated by {interaction.user} ({interaction.user.id}).")
+    if LOG_CHANNEL_ID:
+        guild = interaction.guild
+        log_channel = guild.get_channel(LOG_CHANNEL_ID)
+        responsible_mod_ping = guild.get_member(RESPONSIBLE_MODERATOR_ID)
+        if log_channel:
+            await log_channel.send(f"{responsible_mod_ping.mention} Panic stop initiated by {interaction.user.mention} ({interaction.user.id}).")
+    await client.close()
+    for task in asyncio.all_tasks():
+        task.cancel()
+    exit(1)
+
 #----------------------- message handling -----------------------
 
 @client.event
