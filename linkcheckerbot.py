@@ -354,6 +354,11 @@ def extract_message_urls(message) -> set:
         normalized_urls.add(normalize_url(url))
     return normalized_urls
 
+def strip_unbalanced_parenthesis(url):
+    while url.endswith(")") and url.count("(") < url.count(")"):
+        url = url[:-1]
+    return url
+
 def extract_embed_urls(message) -> set:
     urls = set()
     if not hasattr(message, "embeds"):
@@ -416,6 +421,8 @@ def normalize_url(raw_url: str) -> str:
             parsed.query,
             parsed.fragment
         ))
+
+        normalized = strip_unbalanced_parenthesis(normalized)
 
         return normalized
     except Exception:
@@ -499,7 +506,6 @@ async def virustotal_lookup(session, url, channel):
     return report
 
 async def virustotal_scan_file(session, file_bytes, filename, channel):
-    """Uploads a file to VirusTotal and retrieves the scan report."""
     headers = {"x-apikey": VT_API_KEY}
     
     #uload the file to get an analysis id
@@ -537,7 +543,7 @@ async def virustotal_scan_file(session, file_bytes, filename, channel):
                 return report # Analysis is done, return the full report
             elif status == "queued" or status == "inprogress":
                 log_info(f"Analysis for {filename} is '{status}'. Waiting...")
-                continue # Keep waiting
+                continue
             else:
                 log_error(f"Unexpected analysis status for {filename}: {status}")
                 raise Exception(f"Unexpected analysis status for {filename}: {status}")
