@@ -10,6 +10,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
+from urllib.parse import urlparse, urlunparse
 import tomli
 import tomli_w
 import json
@@ -395,8 +396,6 @@ async def resolve_short_url(message, url: str) -> str:
             )
         pass
     return url
-
-from urllib.parse import urlparse, urlunparse
 
 def normalize_url(raw_url: str) -> str:
     try:
@@ -1974,6 +1973,31 @@ async def panic_stop(interaction: discord.Interaction):
         task.cancel()
     exit(1)
 
+@tree.command(name="say", description="Make the bot say something.")
+@app_commands.describe(message="The message for the bot to send", channel="The channel ID to send the message in (defaults to current channel)", reply_to="Message ID to reply to (optional)")
+async def say_command(interaction: discord.Interaction, message: str, channel: discord.TextChannel = None, reply_to: str = None):
+    if interaction.guild is None:
+        await interaction.response.send_message("I don't currently support DMs!")
+        return
+
+    if not interaction.user.id == RESPONSIBLE_MODERATOR_ID:
+        await interaction.response.send_message("You are not authorized to do this.", ephemeral=True)
+        return
+
+    target_channel = channel or interaction.channel
+    if reply_to:
+        try:
+            msg = await target_channel.fetch_message(int(reply_to))
+            await msg.reply(message)
+        except Exception as e:
+            await interaction.response.send_message(f"Failed to send message: {e}", ephemeral=True)
+            return
+    else:
+        try:
+            await target_channel.send(message)
+        except Exception as e:
+            await interaction.response.send_message(f"Failed to send message: {e}", ephemeral=True)
+            return
 #----------------------- message handling -----------------------
 
 @client.event
