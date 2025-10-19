@@ -1989,12 +1989,14 @@ async def say_command(interaction: discord.Interaction, message: str, channel: d
         try:
             msg = await target_channel.fetch_message(int(reply_to))
             await msg.reply(message)
+            await interaction.response.send_message(f"Message sent as a reply in {target_channel.mention}.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"Failed to send message: {e}", ephemeral=True)
             return
     else:
         try:
             await target_channel.send(message)
+            await interaction.response.send_message(f"Message sent in {target_channel.mention}.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"Failed to send message: {e}", ephemeral=True)
             return
