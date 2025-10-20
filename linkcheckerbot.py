@@ -69,7 +69,7 @@ DEFAULT_CONFIG = """
 discord_token = "YOUR_DISCORD_TOKEN"
 silly_mode = false
 debug_mode = false
-resposible_moderator_id = 0            #optional, user ID of the responsible moderator for the bot
+responsible_moderator_id = 0            #optional, user ID of the responsible moderator for the bot
 scannable_file_extensions = [".exe", ".dll", ".bin", ".dat", ".scr", ".zip", ".rar", ".tar.gz"]
 max_file_scan_size_mb = 30    
 presence = "Bot is online."
@@ -209,13 +209,14 @@ LOCKDOWN_STATE_PATH = "lockdowns.json"
 def save_lockdowns_to_disk(lockdown_data: dict):
     serializable_data = {}
     for guild_id, channels in lockdown_data.items():
-        serializable_data[guild_id] = {}
+        # use string keys for JSON compatibility
+        serializable_data[str(guild_id)] = {}
         for channel_id, data in channels.items():
-            serializable_data[guild_id][channel_id] = {
-                "unlock_at": data["unlock_at"].isoformat(),
-                "prev_everyone": dict(data["previous_overwrite_everyone"]) if data["previous_overwrite_everyone"] else None,
-                "prev_member": dict(data["previous_overwrite_member"]) if data["previous_overwrite_member"] else None,
-                "prev_verified": dict(data["previous_overwrite_verified"]) if data["previous_overwrite_verified"] else None,
+            serializable_data[str(guild_id)][str(channel_id)] = {
+                "unlock_at": data["unlock_at"].isoformat() if data.get("unlock_at") else None,
+                "prev_everyone": dict(data.get("previous_overwrite_everyone")) if data.get("previous_overwrite_everyone") else None,
+                "prev_member": dict(data.get("previous_overwrite_member")) if data.get("previous_overwrite_member") else None,
+                "prev_verified": dict(data.get("previous_overwrite_verified")) if data.get("previous_overwrite_verified") else None,
             }
     
     try:
@@ -235,22 +236,55 @@ def load_lockdowns_from_disk() -> dict:
         live_lockdowns = {} 
         
         for guild_id_str, channels in serializable_data.items():
-            guild_id = int(guild_id_str)
+            try:
+                guild_id = int(guild_id_str)
+            except Exception:
+                continue
             live_lockdowns[guild_id] = {}
             for channel_id_str, data in channels.items():
-                channel_id = int(channel_id_str)
-                
+                try:
+                    channel_id = int(channel_id_str)
+                except Exception:
+                    continue
 
-                prev_everyone = PermissionOverwrite(**data["prev_everyone"]) if data["prev_everyone"] else None
-                prev_member = PermissionOverwrite(**data["prev_member"]) if data["prev_member"] else None
-                prev_verified = PermissionOverwrite(**data["prev_verified"]) if data["prev_verified"] else None
+                # parse unlock time safely
+                unlock_at = None
+                if data.get("unlock_at"):
+                    try:
+                        unlock_at = datetime.fromisoformat(data.get("unlock_at"))
+                        if unlock_at.tzinfo is None:
+                            unlock_at = unlock_at.replace(tzinfo=timezone.utc)
+                    except Exception:
+                        unlock_at = None
+
+                prev_everyone = None
+                prev_member = None
+                prev_verified = None
+
+                try:
+                    if data.get("prev_everyone") is not None:
+                        prev_everyone = PermissionOverwrite(**data.get("prev_everyone"))
+                except Exception:
+                    prev_everyone = None
+
+                try:
+                    if data.get("prev_member") is not None:
+                        prev_member = PermissionOverwrite(**data.get("prev_member"))
+                except Exception:
+                    prev_member = None
+
+                try:
+                    if data.get("prev_verified") is not None:
+                        prev_verified = PermissionOverwrite(**data.get("prev_verified"))
+                except Exception:
+                    prev_verified = None
 
                 live_lockdowns[guild_id][channel_id] = {
-                    "unlock_at": datetime.fromisoformat(data["unlock_at"]),
+                    "unlock_at": unlock_at,
                     "previous_overwrite_everyone": prev_everyone,
                     "previous_overwrite_member": prev_member,
                     "previous_overwrite_verified": prev_verified,
-                    "task": None  #task will be re-created in on_ready
+                    "task": None,
                 }
         return live_lockdowns
     except Exception as e:
@@ -384,6 +418,7 @@ last_scanned_urls: set[str] = set()
 scans_in_progress: dict[str, list[discord.Message]] = {}
 embed_scanned_messages = TTLCache()
 deleted_messages = TTLCache()
+processed_message_urls = TTLCache()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -717,7 +752,7 @@ async def virustotal_scan_file(session, file_bytes, filename, channel, guild: di
             status = report.get("data", {}).get("attributes", {}).get("status")
 
             if status == "completed":
-                return report # Analysis is done, return the full report
+                return report #analysis is done, return the full report
             elif status == "queued" or status == "inprogress":
                 log_info(f"Analysis for {filename} is '{status}'. Waiting...")
                 continue
@@ -739,6 +774,13 @@ async def scan_worker():
                     print(f"Expanded short URL: {url} → {resolved_url}")
                 url = resolved_url
                 domain = extract_domain(url)
+
+            #dedupe same (message, url) processing to avoid duplicate logs
+            processed_key = f"{message.id}:{url}"
+            if processed_key in processed_message_urls:
+                # already processed recently; skip silently
+                continue
+            processed_message_urls.add(processed_key, ttl_seconds=600)
 
             #allowlist check (skip)
             if domain in ALLOWLIST:
@@ -1052,6 +1094,12 @@ def parse_duration(s: str) -> int:
 async def on_ready():
     await tree.sync()
     await client.change_presence(activity=discord.CustomActivity(name=PRESENCE_TEXT))
+
+    # load per-guild settings (if any)
+    try:
+        load_guild_settings()
+    except Exception:
+        log_warning("Failed to load guild settings on startup; continuing with defaults.")
 
     log_info("Re-initializing persistent lockdowns...")
     now = datetime.now(timezone.utc)
@@ -2316,6 +2364,14 @@ To stop receiving messages from this bot, reply “STOP” to this message.
         
         for url in urls:
             await scan_queue.put((message, url))
+
+        if message.embeds:
+            embed_urls = extract_embed_urls(message)
+            new_embed_urls = embed_urls - urls
+            
+            for url in new_embed_urls:
+                await scan_queue.put((message, url))
+
         if message.attachments:
             for attachment in message.attachments:
                 if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
@@ -2350,11 +2406,18 @@ To stop receiving messages from this bot, reply “STOP” to this message.
         await scan_queue.put((message, url))
 
     if message.embeds:
-        embed_urls = extract_embed_urls(message)
-        new_embed_urls = embed_urls - urls
-
-        for url in new_embed_urls:
-            await scan_queue.put((message, url))
+        content_is_allowlisted = bool(urls) and all(extract_domain(url) in ALLOWLIST for url in urls)
+        if content_is_allowlisted:
+            log_info(f"All content links are allowlisted. Skipping embed-only links for {message.author}.")
+            print(f"All content links are allowlisted. Skipping embed-only links for {message.author}.")
+        else:
+            embed_urls = extract_embed_urls(message)
+            new_embed_urls = embed_urls - urls
+            
+            # mark embeds as scanned first to avoid a race where scan_worker also enqueues them
+            embed_scanned_messages.add(message.id, ttl_seconds=600)
+            for url in new_embed_urls:
+                await scan_queue.put((message, url))
 
     if message.attachments:
             for attachment in message.attachments:
@@ -2384,9 +2447,22 @@ async def on_message_edit(before, after):
     before_embed_urls = extract_embed_urls(before)
     after_embed_urls = extract_embed_urls(after)
     new_embed_urls = after_embed_urls - before_embed_urls
+    new_embed_urls = new_embed_urls - new_urls
 
-    for url in new_embed_urls:
-        await scan_queue.put((after, url))
+    content_is_allowlisted = bool(new_urls) and all(extract_domain(url) in ALLOWLIST for url in new_urls)   
+
+
+    if content_is_allowlisted:
+        log_info(f"All new content links are allowlisted. Skipping embed-only links for edited message from {after.author}.")
+        print(f"All new content links are allowlisted. Skipping embed-only links for edited message from {after.author}.")
+    else:
+        #subtract any links that were also added to the content
+        final_new_embed_urls = new_embed_urls - new_urls
+        
+        if final_new_embed_urls:
+            embed_scanned_messages.add(after.id, ttl_seconds=600)
+            for url in final_new_embed_urls:
+                await scan_queue.put((after, url))
 
     before_attachments = {a.id for a in before.attachments}
     new_attachments = [a for a in after.attachments if a.id not in before_attachments]
