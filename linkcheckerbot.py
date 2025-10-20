@@ -2317,8 +2317,8 @@ To stop receiving messages from this bot, reply “STOP” to this message.
         if not urls and message.embeds:
             urls.update(extract_embed_urls(message))
             if urls:
-                embed_scanned_messages.add(message.id, ttl_seconds=600)
-            
+                embed_scanned_messages.add(message.id, ttl_seconds=600),
+        
         for url in urls:
             await scan_queue.put((message, url))
         if message.attachments:
@@ -2356,9 +2356,9 @@ To stop receiving messages from this bot, reply “STOP” to this message.
 
     if message.embeds:
         embed_urls = extract_embed_urls(message)
-        embed_urls.discard(next(iter(urls), None))
-        
-        for url in embed_urls:
+        new_embed_urls = embed_urls - urls
+
+        for url in new_embed_urls:
             await scan_queue.put((message, url))
 
     if message.attachments:
