@@ -17,6 +17,28 @@ import json
 import time
 import tldextract
 
+class TTLCache:
+    def __init__(self):
+        self._data = {}
+
+    def add(self, key: Any, ttl_seconds: int = 300):
+        expiry = time.monotonic() + ttl_seconds
+        self._data[key] = expiry
+
+    def __contains__(self, key: Any) -> bool:
+        expiry = self._data.get(key)
+        
+        if expiry is None:
+            return False
+            
+        if time.monotonic() > expiry:
+            self._data.pop(key, None)
+            return False
+        
+        return True
+
+    def __len__(self) -> int:
+        return len(self._data)
 
 DEFAULT_ALLOWLIST = {
     "domains": [
@@ -179,7 +201,117 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 logger.addHandler(log_file_handler)
 
-lockdowns: dict[int, dict, dict, dict] = {}
+# lockdowns keyed by guild_id then channel_id to support multiple guilds
+lockdowns: dict[int, dict[int, dict]] = {}
+
+LOCKDOWN_STATE_PATH = "lockdowns.json"
+
+def save_lockdowns_to_disk(lockdown_data: dict):
+    serializable_data = {}
+    for guild_id, channels in lockdown_data.items():
+        serializable_data[guild_id] = {}
+        for channel_id, data in channels.items():
+            serializable_data[guild_id][channel_id] = {
+                "unlock_at": data["unlock_at"].isoformat(),
+                "prev_everyone": dict(data["previous_overwrite_everyone"]) if data["previous_overwrite_everyone"] else None,
+                "prev_member": dict(data["previous_overwrite_member"]) if data["previous_overwrite_member"] else None,
+                "prev_verified": dict(data["previous_overwrite_verified"]) if data["previous_overwrite_verified"] else None,
+            }
+    
+    try:
+        with open(LOCKDOWN_STATE_PATH, "w") as f:
+            json.dump(serializable_data, f, indent=2)
+    except Exception as e:
+        log_error(f"Failed to save lockdown state: {e}")
+
+def load_lockdowns_from_disk() -> dict:
+    if not os.path.exists(LOCKDOWN_STATE_PATH):
+        return {}
+        
+    try:
+        with open(LOCKDOWN_STATE_PATH, "r") as f:
+            serializable_data = json.load(f)
+            
+        live_lockdowns = {} 
+        
+        for guild_id_str, channels in serializable_data.items():
+            guild_id = int(guild_id_str)
+            live_lockdowns[guild_id] = {}
+            for channel_id_str, data in channels.items():
+                channel_id = int(channel_id_str)
+                
+
+                prev_everyone = PermissionOverwrite(**data["prev_everyone"]) if data["prev_everyone"] else None
+                prev_member = PermissionOverwrite(**data["prev_member"]) if data["prev_member"] else None
+                prev_verified = PermissionOverwrite(**data["prev_verified"]) if data["prev_verified"] else None
+
+                live_lockdowns[guild_id][channel_id] = {
+                    "unlock_at": datetime.fromisoformat(data["unlock_at"]),
+                    "previous_overwrite_everyone": prev_everyone,
+                    "previous_overwrite_member": prev_member,
+                    "previous_overwrite_verified": prev_verified,
+                    "task": None  #task will be re-created in on_ready
+                }
+        return live_lockdowns
+    except Exception as e:
+        log_error(f"Failed to load lockdown state: {e}")
+        return {}
+    
+lockdowns = load_lockdowns_from_disk()
+
+# per-guild settings persistence
+GUILD_SETTINGS_PATH = "guild_settings.json"
+GUILD_SETTINGS: Dict[str, Dict[str, Any]] = {}
+
+
+def load_guild_settings():
+    global GUILD_SETTINGS
+    if not os.path.exists(GUILD_SETTINGS_PATH):
+        with open(GUILD_SETTINGS_PATH, "w") as f:
+            json.dump({}, f)
+        GUILD_SETTINGS = {}
+        return
+    try:
+        with open(GUILD_SETTINGS_PATH, "r", encoding="utf-8") as f:
+            GUILD_SETTINGS = json.load(f)
+    except Exception:
+        GUILD_SETTINGS = {}
+
+
+def save_guild_settings():
+    tmp = GUILD_SETTINGS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(GUILD_SETTINGS, f, indent=2)
+    os.replace(tmp, GUILD_SETTINGS_PATH)
+
+
+def get_guild_setting(guild: discord.Guild, key: str, fallback=None):
+    if guild is None:
+        return fallback
+    gid = str(guild.id)
+    val = GUILD_SETTINGS.get(gid, {}).get(key)
+    if val is None:
+        return fallback
+    return val
+
+
+def get_log_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    # prefer per-guild setting, fallback to global LOG_CHANNEL_ID
+    channel_id = get_guild_setting(guild, "log_channel_id", LOG_CHANNEL_ID)
+    if not channel_id:
+        return None
+    return guild.get_channel(int(channel_id))
+
+
+async def get_responsible_moderator(guild: discord.Guild) -> Optional[discord.User]:
+    # prefer per-guild setting, fallback to global RESPONSIBLE_MODERATOR_ID
+    mod_id = get_guild_setting(guild, "responsible_moderator_id", RESPONSIBLE_MODERATOR_ID)
+    if not mod_id:
+        return None
+    try:
+        return await client.fetch_user(int(mod_id))
+    except Exception:
+        return None
 
 if os.path.exists(latest_log_path):
     with open(latest_log_path, "r", encoding="utf-8") as f:
@@ -250,8 +382,8 @@ attachment_vt_queue = asyncio.Queue()
 
 last_scanned_urls: set[str] = set()
 scans_in_progress: dict[str, list[discord.Message]] = {}
-embed_scanned_messages = set()
-deleted_messages = set()
+embed_scanned_messages = TTLCache()
+deleted_messages = TTLCache()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -270,6 +402,7 @@ manual_group = app_commands.Group(name="manual", description="Scan URLs/Attachme
 stats_group = app_commands.Group(name="stats", description="View and manipulate stats.")
 fuckups_group = app_commands.Group(name="fuckup", description="Log and view fuckups.")
 moderation_group = app_commands.Group(name="moderate", description="Moderate users anc channels.")
+guild_config_group = app_commands.Group(name="config_guild", description="Manage this server's specific settings")
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
@@ -281,6 +414,7 @@ tree.add_command(manual_group)
 tree.add_command(stats_group)
 tree.add_command(fuckups_group)
 tree.add_command(moderation_group)
+tree.add_command(guild_config_group)
 
 def read_fuckups() -> List[Dict[str, Any]]:
     try:
@@ -379,7 +513,7 @@ def extract_embed_urls(message) -> set:
             urls.update(normalize_url(u) for u in re.findall(URL_REGEX, embed.footer.text))
     return urls
 
-async def resolve_short_url(message, url: str) -> str:
+async def resolve_short_url(message, url: str, guild: discord.Guild) -> str:
     try:
         parsed = extract_domain(url)
         async with aiohttp.ClientSession() as session:
@@ -389,7 +523,7 @@ async def resolve_short_url(message, url: str) -> str:
     except Exception as e:
         log_info(f"Failed to resolve shortener: {e}",  )
         print(f"Failed to resolve shortener: {e}")
-        responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+        responsible_mod = await get_responsible_moderator(guild)
         if responsible_mod:
             await message.channel.send(
                 f"{responsible_mod.mention}, I failed to resolve a shortener: {e}"
@@ -427,8 +561,6 @@ def normalize_url(raw_url: str) -> str:
     except Exception:
         return raw_url.strip().lower()
 
-
-
 def log_violation(user: discord.User, url: str):
     entry = {
         "username": str(user),
@@ -455,9 +587,55 @@ def log_violation(user: discord.User, url: str):
     except Exception as e:
         log_error(f"Failed to log violation: {e}")
 
+async def _unlock_channel_logic(guild: discord.Guild, channel: discord.TextChannel, prev_everyone, prev_member, prev_verified, reason: str):
+    everyone = guild.default_role
+    member_role = discord.utils.get(guild.roles, name=MEMBER_ROLE_NAME)
+    verified_role = discord.utils.get(guild.roles, name=VERIFIED_ROLE_NAME)
+
+    try:
+        if prev_everyone is None:
+            await channel.set_permissions(everyone, overwrite=None, reason=reason)
+        else:
+            await channel.set_permissions(everyone, overwrite=prev_everyone, reason=reason)
+
+        if member_role:
+            if prev_member is None:
+                await channel.set_permissions(member_role, overwrite=None, reason=reason)
+            else:
+                await channel.set_permissions(member_role, overwrite=prev_member, reason=reason)
+
+        if verified_role:
+            if prev_verified is None:
+                await channel.set_permissions(verified_role, overwrite=None, reason=reason)
+            else:
+                await channel.set_permissions(verified_role, overwrite=prev_verified, reason=reason)
+        
+        await channel.send("Lockdown expired, channel unlocked.") 
+
+    except Exception as e:
+        log_error(f"Failed to auto-unlock channel {channel.id}: {e}")
+
+    finally:
+        guild_locks = lockdowns.get(guild.id, {})
+        guild_locks.pop(channel.id, None)
+        if not guild_locks:
+            lockdowns.pop(guild.id, None)
+        save_lockdowns_to_disk(lockdowns)
+
+async def auto_unlock(guild: discord.Guild, channel: discord.TextChannel, prev_everyone, prev_member, prev_verified, delay: float):
+    try:
+        if delay > 0:
+            await asyncio.sleep(delay)
+        
+        log_info(f"Auto-unlocking channel {channel.id} in guild {guild.id}")
+        await _unlock_channel_logic(guild, channel, prev_everyone, prev_member, prev_verified, reason="Lockdown expired")
+
+    except asyncio.CancelledError:
+        log_info(f"Auto-unlock for channel {channel.id} was cancelled.")
+        pass
 
 #virustotal api interaction
-async def virustotal_lookup(session, url, channel):
+async def virustotal_lookup(session, url, channel, guild: discord.Guild):
     scan_url = "https://www.virustotal.com/api/v3/urls"
     headers = { "x-apikey": VT_API_KEY }
 
@@ -467,7 +645,7 @@ async def virustotal_lookup(session, url, channel):
             print(f"URL submission failed for {url}: HTTP {resp.status}")
             log_info(f"URL submission failed for {url}: HTTP {resp.status}",  )
             #log_channel = client.get_channel(LOG_CHANNEL_ID)
-            #responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            #responsible_mod = await get_responsible_moderator(guild)
             #if log_channel and responsible_mod:
             #    await log_channel.send(
             #        f"{responsible_mod.mention}, I failed to scan a link!\n"
@@ -483,7 +661,7 @@ async def virustotal_lookup(session, url, channel):
     async with session.get(report_url, headers=headers) as resp:
         if resp.status != 200:
             print(f"Report fetch failed for {url}: HTTP {resp.status}")
-            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            responsible_mod = await get_responsible_moderator(guild)
             if responsible_mod:
                 await channel.send(
                    f"{responsible_mod.mention}, I failed to scan a link!\n"
@@ -495,7 +673,7 @@ async def virustotal_lookup(session, url, channel):
 
     if "data" not in report or "attributes" not in report["data"]:
         print(f"Malformed response for {url}: {report}")
-        responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+        responsible_mod = await get_responsible_moderator(guild)
         if responsible_mod:
            await channel.send(
                 f"{responsible_mod.mention}, I failed to scan a link! Check logs.\n"
@@ -504,7 +682,7 @@ async def virustotal_lookup(session, url, channel):
 
     return report
 
-async def virustotal_scan_file(session, file_bytes, filename, channel):
+async def virustotal_scan_file(session, file_bytes, filename, channel, guild: discord.Guild):
     headers = {"x-apikey": VT_API_KEY}
     
     #uload the file to get an analysis id
@@ -515,7 +693,7 @@ async def virustotal_scan_file(session, file_bytes, filename, channel):
     async with session.post(upload_url, headers=headers, data=form_data) as resp:
         if resp.status != 200:
             log_error(f"File upload failed for {filename}: HTTP {resp.status}")
-            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            responsible_mod = await get_responsible_moderator(guild)
             if responsible_mod:
                 await channel.send(
                     f"{responsible_mod.mention}, I failed to upload an attachment for scanning!\n"
@@ -554,7 +732,7 @@ async def scan_worker():
         domain = extract_domain(url)
         try:
             if domain in SHORTENERS:
-                resolved_url = await resolve_short_url(message, url)
+                resolved_url = await resolve_short_url(message, url, message.guild) 
                 if resolved_url != url:
                     increment_stat("shorteners_expanded")
                     log_info(f"Expanded short URL: {url} → {resolved_url}" )
@@ -576,13 +754,14 @@ async def scan_worker():
                     try:
                         await message.delete()
                         increment_stat("messages_deleted")
-                        deleted_messages.add(message.id)
+                        deleted_messages.add(message.id, ttl_seconds=300)
                         deleted = True
                         log_info(f"[DENYLIST] Deleted message with denylisted link: {url} from {message.author} ({message.author.id})")
                         await message.channel.send("A denylisted link was removed.")
                         log_violation(message.author, url)
                         increment_stat("violations_logged")
-                        log_channel = client.get_channel(LOG_CHANNEL_ID)
+                        
+                        log_channel = get_log_channel(message.guild) 
                         if log_channel:
                             await log_channel.send(
                                 f" A message containing \"`{url}`\" was removed due to being denylisted.\n"
@@ -602,7 +781,7 @@ async def scan_worker():
                 for eurl in embed_urls:
                     increment_stat("urls_scanned")
                     await scan_queue.put((message, eurl))
-                embed_scanned_messages.add(message.id)
+                embed_scanned_messages.add(message.id, ttl_seconds=600)
 
             #queue for vt
             if url in scans_in_progress:
@@ -619,7 +798,7 @@ async def scan_worker():
 
         except Exception as e:
             log_error(f"[Scan Worker Error] Failed to process {url}: {e}")
-            responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            responsible_moderator = await get_responsible_moderator(message.guild) 
             if responsible_moderator:
                 await message.channel.send(
                     f"{responsible_moderator.mention}, I failed to process a link!\n"
@@ -627,19 +806,18 @@ async def scan_worker():
                 )
         finally:
             scan_queue.task_done()
-            #print(f"Finished processing: {url} from {message.author} ({message.author.id}) in #{message.channel}")
-
+            
 async def vt_worker():
     async with aiohttp.ClientSession() as session:
         while True:
             message, url = await vt_queue.get()
-
+            guild = message.guild
             deferred_messages = []
 
             try:
                 increment_stat("virustotal_scans")
                 #virustotal scan
-                report = await virustotal_lookup(session, url, message.channel)
+                report = await virustotal_lookup(session, url, message.channel, guild)
                 stats = report["data"]["attributes"]["last_analysis_stats"]
                 detections = stats.get("malicious", 0)
 
@@ -648,7 +826,7 @@ async def vt_worker():
 
                 if detections >= DELETION_THRESHOLD:
                     increment_stat("malicious_urls")
-                    log_channel = client.get_channel(LOG_CHANNEL_ID)
+                    log_channel = get_log_channel(guild) 
                     #denylist and save
                     domain = extract_domain(url)
                     if domain not in DENYLIST:
@@ -664,11 +842,11 @@ async def vt_worker():
                         if message.id not in deleted_messages:
                             await message.delete()
                             increment_stat("messages_deleted")
-                            deleted_messages.add(message.id)
+                            deleted_messages.add(message.id, ttl_seconds=300)
                             await check_user_violations(message.author, message.channel)
                     except discord.Forbidden:
                         log_warning(f"Failed to delete message from {message.author} ({message.author.id}) in #{message.channel} due to missing permissions.")
-                        responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                        responsible_moderator = await get_responsible_moderator(guild)
                         if responsible_moderator:
                             await message.channel.send(
                                 f"I tried to delete a message with a malicious link but I don't have permissions, {responsible_moderator.mention}!"
@@ -684,7 +862,7 @@ async def vt_worker():
                             f"({detections} detections on VirusTotal)"
                         )
                         log_info(f"[MALICIOUS] Deleted: {url} from {message.author} ({message.author.id})")
-                        if log_channel:
+                        if log_channel: # log_channel is already fetched from above
                             await log_channel.send(
                                 f"`{url}` flagged as malicious by VirusTotal ({detections} detections).\n"
                                 f"Message deleted.\n"
@@ -699,7 +877,7 @@ async def vt_worker():
                             if msg.id not in deleted_messages:
                                 await msg.delete()
                                 increment_stat("messages_deleted")
-                                deleted_messages.add(msg.id)
+                                deleted_messages.add(msg.id, ttl_seconds=300)
                                 log_violation(msg.author, url)
                                 increment_stat("violations_logged")
                                 await msg.channel.send(
@@ -714,12 +892,12 @@ async def vt_worker():
                         except Exception as e:
                             log_warning(f"Failed to delete deferred message: {e}")
                             print(f"Failed to delete deferred message: {e}")
-                            responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                            responsible_moderator = await get_responsible_moderator(guild)
                             if responsible_moderator:
                                 await msg.channel.send(f"{responsible_moderator.mention} I failed to delete deferred message: {e}")
 
                     #log result to moderation channel
-                    if log_channel:
+                    if log_channel: # log_channel is already fetched from above
                         await log_channel.send(
                             f"`{url}` flagged as malicious by VirusTotal ({detections} detections).\n"
                             f"Original + {delete_count} duplicate messages were removed.\n"
@@ -735,7 +913,7 @@ async def vt_worker():
             except Exception as e:
                 log_error(f"[VT Worker Error] Failed to scan {url}: {e}")
                 print(f"Error scanning {url}: {e}")
-                responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                responsible_mod = await get_responsible_moderator(guild)
                 if responsible_mod:
                     await message.channel.send(
                         f"{responsible_mod.mention}, I failed to scan a link!\n"
@@ -752,6 +930,7 @@ async def attachment_vt_worker():
     async with aiohttp.ClientSession() as session:
         while True:
             message, attachment = await attachment_vt_queue.get()
+            guild = message.guild
             try:
                 log_info(f"Scanning attachment: {attachment.filename} from {message.author} ({message.author.id})")
                 print(f"Scanning attachment: {attachment.filename} from {message.author} ({message.author.id})")
@@ -760,11 +939,11 @@ async def attachment_vt_worker():
                 file_bytes = await attachment.read()
                 
                 #scan the file using vt
-                report = await virustotal_scan_file(session, file_bytes, attachment.filename, message.channel)
+                report = await virustotal_scan_file(session, file_bytes, attachment.filename, message.channel, guild)
                 stats = report["data"]["attributes"]["stats"]
                 detections = stats.get("malicious", 0)
 
-                if detections > 1:
+                if detections >= DELETION_THRESHOLD:
                     increment_stat("malicious_attachments")
                     log_info(f"[MALICIOUS ATTACHMENT] Deleted message with attachment: {attachment.filename} from {message.author}")
                     
@@ -777,7 +956,7 @@ async def attachment_vt_worker():
                         await check_user_violations(message.author, message.channel)
                     except discord.Forbidden:
                         log_warning(f"Failed to delete message with attachment from {message.author} due to missing permissions.")
-                        responsible_moderator = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                        responsible_moderator = await get_responsible_moderator(guild)
                         if responsible_moderator:
                             await message.channel.send(
                                 f"I tried to delete a message with a malicious attachment but I don't have permissions, {responsible_moderator.mention}!"
@@ -792,7 +971,7 @@ async def attachment_vt_worker():
                         f"({detections} detections on VirusTotal)"
                     )
                     
-                    log_channel = client.get_channel(LOG_CHANNEL_ID)
+                    log_channel = get_log_channel(guild)
                     if log_channel:
                         await log_channel.send(
                             f"Attachment `{attachment.filename}` flagged as malicious by VirusTotal ({detections} detections).\n"
@@ -806,7 +985,7 @@ async def attachment_vt_worker():
 
             except Exception as e:
                 log_error(f"[Attachment Worker Error] Failed to scan {attachment.filename}: {e}")
-                responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+                responsible_mod = await get_responsible_moderator(guild)
                 if responsible_mod:
                      await message.channel.send(
                         f"{responsible_mod.mention}, I failed to scan an attachment!\n"
@@ -818,6 +997,7 @@ async def attachment_vt_worker():
 
 async def check_user_violations(user, message_channel):
     now = datetime.now(timezone.utc)
+    guild = message_channel.guild
     user_violations[user.id].append(now)
 
     #keep only recent violations
@@ -826,7 +1006,7 @@ async def check_user_violations(user, message_channel):
     ]
 
     if len(user_violations[user.id]) >= MAX_MALICIOUS_MESSAGES:
-        log_channel = client.get_channel(LOG_CHANNEL_ID)
+        log_channel = get_log_channel(guild)
         if log_channel:
             await log_channel.send(
                 f"**User {user.mention} flagged for possible spam!**\n"
@@ -841,7 +1021,7 @@ async def check_user_violations(user, message_channel):
             )
         except discord.Forbidden:
             #ping responsible moderator if we can't timeout
-            responsible_mod = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+            responsible_mod = await get_responsible_moderator(guild)
             log_warning(f"Failed to timeout user {user} due to missing permissions.")
             if responsible_mod:
                 await message_channel.send(
@@ -872,6 +1052,49 @@ def parse_duration(s: str) -> int:
 async def on_ready():
     await tree.sync()
     await client.change_presence(activity=discord.CustomActivity(name=PRESENCE_TEXT))
+
+    log_info("Re-initializing persistent lockdowns...")
+    now = datetime.now(timezone.utc)
+    
+    # Iterate through a copy since we may modify the dict
+    for guild_id, channels in list(lockdowns.items()):
+        guild = client.get_guild(guild_id)
+        if not guild:
+            log_warning(f"Bot is no longer in guild {guild_id}, clearing its lockdowns.")
+            lockdowns.pop(guild_id, None)
+            continue
+            
+        for channel_id, data in list(channels.items()):
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                log_warning(f"Channel {channel_id} no longer exists, clearing its lockdown.")
+                channels.pop(channel_id, None)
+                continue
+                
+            unlock_at = data["unlock_at"]
+            prev_everyone = data["previous_overwrite_everyone"]
+            prev_member = data["previous_overwrite_member"]
+            prev_verified = data["previous_overwrite_verified"]
+            
+            if unlock_at <= now:
+                # This lockdown expired while the bot was offline. Unlock immediately.
+                log_info(f"Lockdown for {channel.name} expired while offline. Unlocking now.")
+                await _unlock_channel_logic(guild, channel, prev_everyone, prev_member, prev_verified, reason="Lockdown expired (offline)")
+                # _unlock_channel_logic will remove it from `lockdowns` and save
+            else:
+                # This lockdown is still active. Re-create the task.
+                remaining_seconds = (unlock_at - now).total_seconds()
+                log_info(f"Resuming lockdown for {channel.name}. Unlocking in {remaining_seconds:.0f}s.")
+                
+                task = client.loop.create_task(
+                    auto_unlock(guild, channel, prev_everyone, prev_member, prev_verified, delay=remaining_seconds)
+                )
+                # Store the new task in the in-memory dict
+                lockdowns[guild_id][channel_id]["task"] = task
+                
+    # Save any cleanups (e.g., of old guilds/channels)
+    save_lockdowns_to_disk(lockdowns)
+
     print(f"Logged in as {client.user}")
     log_info(f"Bot started." )
     client.loop.create_task(scan_worker())
@@ -1239,10 +1462,7 @@ async def config_key_autocomplete(interaction: discord.Interaction, current: str
     ][:25]
 
 @config_group.command(name="edit", description="Edit a config option.")
-@app_commands.describe(
-    key="Name of the config key (/help for details)",
-    value="New value for the config key"
-)
+@app_commands.describe(key="Name of the config key (/help for details)", value="New value for the config key")
 @app_commands.autocomplete(key=config_key_autocomplete)
 async def config_edit(interaction: discord.Interaction, key: str, value: str):
 
@@ -1315,6 +1535,46 @@ async def config_toggle_debug(interaction: discord.Interaction):
     save_config()
 
     await interaction.response.send_message(f"Debug mode is now **{'enabled' if DEBUG_MODE else 'disabled'}**.")
+
+@guild_config_group.command(name="set_log_channel", description="Set this server's private log channel")
+@app_commands.describe(channel="The channel to log to (or None to use global default)")
+async def config_guild_set_log(interaction: discord.Interaction, channel: Optional[discord.TextChannel]):
+    if not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message("You are not authorized to do this.", ephemeral=True)
+        return
+        
+    gid = str(interaction.guild.id)
+    if gid not in GUILD_SETTINGS:
+        GUILD_SETTINGS[gid] = {}
+
+    if channel is None:
+        GUILD_SETTINGS[gid].pop("log_channel_id", None)
+        save_guild_settings()
+        await interaction.response.send_message("This server's log channel has been reset. I will now use the global default.", ephemeral=True)
+    else:
+        GUILD_SETTINGS[gid]["log_channel_id"] = channel.id
+        save_guild_settings()
+        await interaction.response.send_message(f"This server's log channel has been set to {channel.mention}.", ephemeral=True)
+
+@guild_config_group.command(name="set_responsible_moderator", description="Set this server's responsible moderator")
+@app_commands.describe(user="The moderator to ping for issues (or None to use global default)")
+async def config_guild_set_mod(interaction: discord.Interaction, user: Optional[discord .User]):
+    if not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message("You are not authorized to do this.", ephemeral=True)
+        return
+        
+    gid = str(interaction.guild.id)
+    if gid not in GUILD_SETTINGS:
+        GUILD_SETTINGS[gid] = {}
+
+    if user is None:
+        GUILD_SETTINGS[gid].pop("responsible_moderator_id", None)
+        save_guild_settings()
+        await interaction.response.send_message("This server's responsible moderator has been reset. I will now use the global default.", ephemeral=True)
+    else:
+        GUILD_SETTINGS[gid]["responsible_moderator_id"] = user.id
+        save_guild_settings()
+        await interaction.response.send_message(f"This server's responsible moderator has been set to {user.mention}.", ephemeral=True)
     
 @violations_group.command(name="show", description="Show all violations for a user")
 @app_commands.describe(user="The user to view violations for")
@@ -1411,7 +1671,7 @@ async def debug_manual_check(interaction: discord.Interaction, url: str):
     async with aiohttp.ClientSession() as session:
         try:
             increment_stat("virustotal_scans")
-            report = await virustotal_lookup(session, norm_url, interaction.channel)
+            report = await virustotal_lookup(session, norm_url, interaction.channel, interaction.guild)
             stats = report["data"]["attributes"]["last_analysis_stats"]
             malicious = stats.get("malicious", 0)
             suspicious = stats.get("suspicious", 0)
@@ -1478,7 +1738,7 @@ async def manual_check_file(interaction: discord.Interaction, file: discord.Atta
     try:
         async with aiohttp.ClientSession() as session:
             file_bytes = await file.read()
-            report = await virustotal_scan_file(session, file_bytes, file.filename, interaction.channel)
+            report = await virustotal_scan_file(session, file_bytes, file.filename, interaction.channel, interaction.guild)
 
             stats = report["data"]["attributes"]["stats"]
             malicious = stats.get("malicious", 0)
@@ -1491,7 +1751,7 @@ async def manual_check_file(interaction: discord.Interaction, file: discord.Atta
             if malicious > 0:
                 increment_stat("malicious_attachments")
 
-            # Get a short list of engines that flagged it
+            #get a short list of engines that flagged it
             flagged_by = [
                 name for name, result in report["data"]["attributes"]["results"].items()
                 if result["category"] in {"malicious", "suspicious"}
@@ -1563,8 +1823,7 @@ async def ping_command(interaction: discord.Interaction):
     await interaction.response.defer()
     before = discord.utils.utcnow()
 
-    #the io call that actually touches discord
-    await interaction.followup.send("Measuring...")  # throwaway message
+    await interaction.followup.send("Measuring...")  #throwaway message
 
     after = discord.utils.utcnow()
     roundtrip = round((after - before).total_seconds() * 1000)
@@ -1828,12 +2087,15 @@ async def lockdown(interaction: discord.Interaction, duration: str, reason: str 
         return
     
     channel = interaction.channel
+    guild = interaction.guild
     everyone = interaction.guild.default_role
     member_role = discord.utils.get(interaction.guild.roles, name=MEMBER_ROLE_NAME)
     verified_role = discord.utils.get(interaction.guild.roles, name=VERIFIED_ROLE_NAME)
 
 
-    if channel.id in lockdowns:
+    # ensure per-guild map exists
+    guild_locks = lockdowns.setdefault(interaction.guild.id, {})
+    if channel.id in guild_locks:
         await interaction.response.send_message("This channel is already locked.", ephemeral=True)
         return
 
@@ -1871,38 +2133,22 @@ async def lockdown(interaction: discord.Interaction, duration: str, reason: str 
         await channel.set_permissions(verified_role, overwrite=overwrite_verified, reason=f"Lockdown by {interaction.user} - {reason}")
 
     await interaction.response.send_message(f"Channel locked for {duration}. Reason: {reason}")
-    if LOG_CHANNEL_ID:
-        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            await log_channel.send(f"Channel {channel.mention} locked by {interaction.user.mention} for {duration}. Reason: {reason}")
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        await log_channel.send(f"Channel {channel.mention} locked by {interaction.user.mention} for {duration}. Reason: {reason}")
 
-    async def auto_unlock():
-        try:
-            await asyncio.sleep(seconds)
-            # restore permissions
-            if prev_everyone is None:
-                await channel.set_permissions(everyone, overwrite=None, reason="Lockdown expired")
-            else:
-                await channel.set_permissions(everyone, overwrite=prev_everyone, reason="Lockdown expired")
+    unlock_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
 
-            if member_role:
-                if prev_member is None:
-                    await channel.set_permissions(member_role, overwrite=None, reason="Lockdown expired")
-                else:
-                    await channel.set_permissions(member_role, overwrite=prev_member, reason="Lockdown expired")
+    task = client.loop.create_task(auto_unlock(guild, channel, prev_everyone, prev_member, prev_verified, delay=seconds))
+    guild_locks[channel.id] = {
+        "task": task,
+        "unlock_at": unlock_at,
+        "previous_overwrite_everyone": prev_everyone,
+        "previous_overwrite_member": prev_member,
+        "previous_overwrite_verified": prev_verified
+    }
 
-            if verified_role:
-                if prev_verified is None:
-                    await channel.set_permissions(verified_role, overwrite=None, reason="Lockdown expired")
-                else:
-                    await channel.set_permissions(verified_role, overwrite=prev_verified, reason="Lockdown expired")
-
-            await channel.send("Lockdown expired, channel unlocked.")
-        finally:
-            lockdowns.pop(channel.id, None)
-
-    task = asyncio.create_task(auto_unlock())
-    lockdowns[channel.id] = {"task": task, "previous_overwrite_everyone": prev_everyone, "previous_overwrite_member": prev_member, "previous_overwrite_verified": prev_verified}
+    save_lockdowns_to_disk(lockdowns)
 
 @moderation_group.command(name="unlock", description="Manually unlock the channel early.")
 async def unlock(interaction: discord.Interaction):
@@ -1915,10 +2161,16 @@ async def unlock(interaction: discord.Interaction):
         return
 
     channel = interaction.channel
-    data = lockdowns.pop(channel.id, None)
-    if not data:
+    guild_locks = lockdowns.get(interaction.guild.id, {})
+    data = guild_locks.pop(channel.id, None)
+    if data is None:
         await interaction.response.send_message("This channel is not locked.", ephemeral=True)
         return
+    # clean up empty guild mapping
+    if guild_locks == {}:
+        lockdowns.pop(interaction.guild.id, None)
+
+    save_lockdowns_to_disk(lockdowns)
 
     if data["task"]:
         data["task"].cancel()
@@ -1964,8 +2216,8 @@ async def panic_stop(interaction: discord.Interaction):
     log_info(f"Panic stop initiated by {interaction.user} ({interaction.user.id}).")
     if LOG_CHANNEL_ID:
         guild = interaction.guild
-        log_channel = guild.get_channel(LOG_CHANNEL_ID)
-        responsible_mod_ping = await client.fetch_user(RESPONSIBLE_MODERATOR_ID)
+        log_channel = get_log_channel(guild)
+        responsible_mod_ping = await get_responsible_moderator(guild)
         if log_channel:
             await log_channel.send(f"{responsible_mod_ping.mention} Panic stop initiated by {interaction.user.mention} ({interaction.user.id}).")
     await client.close()
@@ -1980,7 +2232,8 @@ async def say_command(interaction: discord.Interaction, message: str, channel: d
         await interaction.response.send_message("I don't currently support DMs!")
         return
 
-    if not interaction.user.id == RESPONSIBLE_MODERATOR_ID:
+    responsible_mod = await get_responsible_moderator(interaction.guild)
+    if not responsible_mod or not interaction.user.id == responsible_mod.id:
         await interaction.response.send_message("You are not authorized to do this.", ephemeral=True)
         return
 
@@ -2060,6 +2313,11 @@ To stop receiving messages from this bot, reply “STOP” to this message.
             
     if message.webhook_id or message.author.bot:
         urls = extract_message_urls(message)
+
+        if not urls and message.embeds:
+            urls.update(extract_embed_urls(message))
+            if urls:
+                embed_scanned_messages.add(message.id, ttl_seconds=600)
         for url in urls:
             await scan_queue.put((message, url))
         if message.attachments:
@@ -2095,6 +2353,13 @@ To stop receiving messages from this bot, reply “STOP” to this message.
     for url in urls:
         await scan_queue.put((message, url))
 
+    if message.embeds:
+        embed_urls = extract_embed_urls(message)
+        embed_urls.discard(next(iter(urls), None))
+        
+        for url in embed_urls:
+            await scan_queue.put((message, url))
+
     if message.attachments:
             for attachment in message.attachments:
                 if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
@@ -2115,11 +2380,33 @@ async def on_message_edit(before, after):
     
     before_urls = extract_message_urls(before)
     after_urls = extract_message_urls(after)
-
     new_urls = after_urls - before_urls
 
     for url in new_urls:
         await scan_queue.put((after, url))
+
+    before_embed_urls = extract_embed_urls(before)
+    after_embed_urls = extract_embed_urls(after)
+    new_embed_urls = after_embed_urls - before_embed_urls
+
+    for url in new_embed_urls:
+        await scan_queue.put((after, url))
+
+    before_attachments = {a.id for a in before.attachments}
+    new_attachments = [a for a in after.attachments if a.id not in before_attachments]
+
+    if new_attachments:
+        if not after.author.guild_permissions.manage_messages:
+            for attachment in new_attachments:
+                if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+                    if attachment.size > MAX_FILE_SIZE:
+                        log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
+                        continue
+                    
+                    increment_stat("attachments_scanned")
+                    await attachment_vt_queue.put((after, attachment))
+                else:
+                    log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
 
 
 client.run(DISCORD_TOKEN)
