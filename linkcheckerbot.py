@@ -2375,15 +2375,22 @@ To stop receiving messages from this bot, reply “STOP” to this message.
             await scan_queue.put((message, url))
 
         if message.embeds:
-            embed_urls = extract_embed_urls(message)
-            new_embed_urls = embed_urls - urls
 
-            # mark this message as having had its embeds scanned to avoid races
-            if new_embed_urls:
-                embed_scanned_messages.add(message.id, ttl_seconds=600)
+            content_is_allowlisted = bool(urls) and all(extract_domain(url) in ALLOWLIST for url in urls)
 
-            for url in new_embed_urls:
-                await scan_queue.put((message, url))
+            if content_is_allowlisted:
+                log_info(f"All content links are allowlisted. Skipping embed-only links for webhook/bot message from {message.author}.")
+                print(f"All content links are allowlisted. Skipping embed-only links for webhook/bot message from {message.author}.")
+            else:
+                embed_urls = extract_embed_urls(message)
+                new_embed_urls = embed_urls - urls
+
+                # mark this message as having had its embeds scanned to avoid races
+                if new_embed_urls:
+                    embed_scanned_messages.add(message.id, ttl_seconds=600)
+
+                for url in new_embed_urls:
+                    await scan_queue.put((message, url))
 
         if message.attachments:
             for attachment in message.attachments:
@@ -2460,7 +2467,6 @@ async def on_message_edit(before, after):
     before_embed_urls = extract_embed_urls(before)
     after_embed_urls = extract_embed_urls(after)
     new_embed_urls = after_embed_urls - before_embed_urls
-    new_embed_urls = new_embed_urls - new_urls
 
     content_is_allowlisted = bool(new_urls) and all(extract_domain(url) in ALLOWLIST for url in new_urls)   
 
