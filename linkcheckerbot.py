@@ -531,21 +531,39 @@ def strip_unbalanced_parenthesis(url):
 
 def extract_embed_urls(message) -> set:
     urls = set()
-    if not hasattr(message, "embeds"):
+    if not getattr(message, "embeds", None):
         return urls
 
     for embed in message.embeds:
-        if embed.url:
-            urls.add(normalize_url(embed.url))
-        if embed.title:
-            urls.update(normalize_url(u) for u in re.findall(URL_REGEX, embed.title))
-        if embed.description:
-            urls.update(normalize_url(u) for u in re.findall(URL_REGEX, embed.description))
+        candidates: List[str] = []
+
+        if getattr(embed, "url", None):
+            candidates.append(embed.url)
+
+        for attr in ("title", "description"):
+            val = getattr(embed, attr, None)
+            if val:
+                candidates.extend(re.findall(URL_REGEX, val))
+
         for field in getattr(embed, "fields", []):
-            if hasattr(field, "value"):
-                urls.update(normalize_url(u) for u in re.findall(URL_REGEX, field.value))
-        if getattr(embed, "footer", None) and getattr(embed.footer, "text", None):
-            urls.update(normalize_url(u) for u in re.findall(URL_REGEX, embed.footer.text))
+            val = getattr(field, "value", None)
+            if val:
+                candidates.extend(re.findall(URL_REGEX, val))
+
+        footer = getattr(embed, "footer", None)
+        if footer and getattr(footer, "text", None):
+            candidates.extend(re.findall(URL_REGEX, footer.text))
+
+        for u in candidates:
+            try:
+                normalized = normalize_url(u)
+            except Exception:
+                normalized = u.strip().lower()
+
+            if normalized:
+                increment_stat("urls_scanned")
+                urls.add(normalized)
+
     return urls
 
 async def resolve_short_url(message, url: str, guild: discord.Guild) -> str:
@@ -815,15 +833,6 @@ async def scan_worker():
                         log_info(f"Message from {message.author} was already removed.")
                         print(f"Message from {message.author} was already removed.")
                     continue
-
-            #only scan embeds once
-            if message.id not in embed_scanned_messages:
-                embed_urls = extract_embed_urls(message)
-                embed_urls.discard(url)
-                for eurl in embed_urls:
-                    increment_stat("urls_scanned")
-                    await scan_queue.put((message, eurl))
-                embed_scanned_messages.add(message.id, ttl_seconds=600)
 
             #queue for vt
             if url in scans_in_progress:
@@ -1697,7 +1706,7 @@ async def debug_manual_check(interaction: discord.Interaction, url: str):
     if extract_domain(norm_url) in SHORTENERS:
         await interaction.followup.edit_original_response(f"`{norm_url}` is a shortener. Resolving...")
         try:
-            norm_url = await resolve_short_url(interaction.user, norm_url)
+            norm_url = await resolve_short_url(interaction, norm_url, interaction.guild)
             increment_stat("shorteners_expanded")
         except Exception as e:
             await interaction.followup.edit_original_response(f"Failed to resolve shortener: {e}")
@@ -2368,7 +2377,11 @@ To stop receiving messages from this bot, reply “STOP” to this message.
         if message.embeds:
             embed_urls = extract_embed_urls(message)
             new_embed_urls = embed_urls - urls
-            
+
+            # mark this message as having had its embeds scanned to avoid races
+            if new_embed_urls:
+                embed_scanned_messages.add(message.id, ttl_seconds=600)
+
             for url in new_embed_urls:
                 await scan_queue.put((message, url))
 
