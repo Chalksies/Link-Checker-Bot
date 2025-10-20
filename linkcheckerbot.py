@@ -2375,7 +2375,6 @@ To stop receiving messages from this bot, reply “STOP” to this message.
             await scan_queue.put((message, url))
 
         if message.embeds:
-
             content_is_allowlisted = bool(urls) and all(extract_domain(url) in ALLOWLIST for url in urls)
 
             if content_is_allowlisted:
@@ -2456,48 +2455,78 @@ To stop receiving messages from this bot, reply “STOP” to this message.
 async def on_message_edit(before, after):
     if after.author == client.user:
         return
-    
+
     before_urls = extract_message_urls(before)
     after_urls = extract_message_urls(after)
     new_urls = after_urls - before_urls
-
-    for url in new_urls:
-        await scan_queue.put((after, url))
 
     before_embed_urls = extract_embed_urls(before)
     after_embed_urls = extract_embed_urls(after)
     new_embed_urls = after_embed_urls - before_embed_urls
 
+    before_attachments = {a.id for a in before.attachments}
+    new_attachments = [a for a in after.attachments if a.id not in before_attachments]
+
+    if after.webhook_id or after.author.bot:
+        for url in new_urls:
+            await scan_queue.put((after, url))
+
+        content_is_allowlisted = bool(new_urls) and all(extract_domain(url) in ALLOWLIST for url in new_urls)   
+        if content_is_allowlisted:
+            log_info(f"All new content links are allowlisted. Skipping embed-only links for bot/webhook edit from {after.author}.")
+        else:
+            final_new_embed_urls = new_embed_urls - new_urls
+            if final_new_embed_urls:
+                embed_scanned_messages.add(after.id, ttl_seconds=600)
+                for url in final_new_embed_urls:
+                    await scan_queue.put((after, url))
+        
+        for attachment in new_attachments:
+            if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+                if attachment.size > MAX_FILE_SIZE:
+                    log_info(f"Skipping attachment {attachment.filename} due to size.")
+                    continue
+                increment_stat("attachments_scanned")
+                await attachment_vt_queue.put((after, attachment))
+        return
+
+    if after.author.guild_permissions.manage_messages:
+        if new_urls or new_embed_urls:
+            log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
+            print(f"Skipping link edit check for {after.author} due to mod permissions.")
+        
+        for attachment in new_attachments:
+            if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+                if attachment.size > MAX_FILE_SIZE:
+                    log_info(f"Skipping attachment {attachment.filename} due to size.")
+                    continue
+                increment_stat("attachments_scanned")
+                await attachment_vt_queue.put((after, attachment))
+        return
+
+    for url in new_urls:
+        await scan_queue.put((after, url))
+
     content_is_allowlisted = bool(new_urls) and all(extract_domain(url) in ALLOWLIST for url in new_urls)   
-
-
     if content_is_allowlisted:
         log_info(f"All new content links are allowlisted. Skipping embed-only links for edited message from {after.author}.")
         print(f"All new content links are allowlisted. Skipping embed-only links for edited message from {after.author}.")
     else:
-        #subtract any links that were also added to the content
         final_new_embed_urls = new_embed_urls - new_urls
-        
         if final_new_embed_urls:
             embed_scanned_messages.add(after.id, ttl_seconds=600)
             for url in final_new_embed_urls:
                 await scan_queue.put((after, url))
 
-    before_attachments = {a.id for a in before.attachments}
-    new_attachments = [a for a in after.attachments if a.id not in before_attachments]
-
-    if new_attachments:
-        if not after.author.guild_permissions.manage_messages:
-            for attachment in new_attachments:
-                if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
-                    if attachment.size > MAX_FILE_SIZE:
-                        log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
-                        continue
-                    
-                    increment_stat("attachments_scanned")
-                    await attachment_vt_queue.put((after, attachment))
-                else:
-                    log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
-
+    for attachment in new_attachments:
+        if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+            if attachment.size > MAX_FILE_SIZE:
+                log_info(f"Skipping attachment {attachment.filename} due to size.")
+                print(f"Skipping attachment {attachment.filename} due to size.")
+                continue
+            increment_stat("attachments_scanned")
+            await attachment_vt_queue.put((after, attachment))
+        else:
+            log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
 
 client.run(DISCORD_TOKEN)
