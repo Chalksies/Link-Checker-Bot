@@ -1554,7 +1554,7 @@ async def config_guild_set_log(interaction: discord.Interaction, channel: Option
     else:
         GUILD_SETTINGS[gid]["log_channel_id"] = channel.id
         save_guild_settings()
-        await interaction.response.send_message(f"This server's log channel has been set to {channel.mention}.", ephemeral=True)
+        await interaction.response.send_message(f"This server's log channel has been set to {channel.mention}.")
 
 @guild_config_group.command(name="set_responsible_moderator", description="Set this server's responsible moderator")
 @app_commands.describe(user="The moderator to ping for issues (or None to use global default)")
@@ -1574,7 +1574,7 @@ async def config_guild_set_mod(interaction: discord.Interaction, user: Optional[
     else:
         GUILD_SETTINGS[gid]["responsible_moderator_id"] = user.id
         save_guild_settings()
-        await interaction.response.send_message(f"This server's responsible moderator has been set to {user.mention}.", ephemeral=True)
+        await interaction.response.send_message(f"This server's responsible moderator has been set to {user.mention}.")
     
 @violations_group.command(name="show", description="Show all violations for a user")
 @app_commands.describe(user="The user to view violations for")
