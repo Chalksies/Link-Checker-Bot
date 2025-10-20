@@ -2313,11 +2313,6 @@ To stop receiving messages from this bot, reply “STOP” to this message.
             
     if message.webhook_id or message.author.bot:
         urls = extract_message_urls(message)
-
-        if not urls and message.embeds:
-            urls.update(extract_embed_urls(message))
-            if urls:
-                embed_scanned_messages.add(message.id, ttl_seconds=600),
         
         for url in urls:
             await scan_queue.put((message, url))
