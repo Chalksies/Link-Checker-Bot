@@ -1170,7 +1170,7 @@ async def allowlist_add(interaction: discord.Interaction, domain: str):
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
         return
 
-    domain = normalize_url(domain)
+    domain = extract_domain(domain)
     if domain in ALLOWLIST:
         await interaction.response.send_message(f"This domain is already on the allowlist.")
     else:
@@ -2028,101 +2028,191 @@ async def allfuckups(interaction: discord.Interaction):
 
     await interaction.response.send_message(f"**All fuckups:**\n{joined}")
     
+class HelpView(discord.ui.View):
+    def __init__(self, embeds: List[discord.Embed], original_user: discord.User):
+        super().__init__(timeout=180.0) 
+        self.embeds = embeds
+        self.original_user = original_user
+        self.current_page = 0
+        self.message: Optional[discord.Message] = None
+        
+        for i, embed in enumerate(self.embeds):
+            embed.set_footer(text=f"Page {i + 1}/{len(self.embeds)}")
+        
+        self.update_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.original_user.id:
+            await interaction.response.send_message("You can't control this help menu.", ephemeral=True)
+            return False
+        return True
+
+    def update_buttons(self):
+        self.prev_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page == (len(self.embeds) - 1)
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, custom_id="help_prev")
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, custom_id="help_next")
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.danger, custom_id="help_close")
+    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.stop()
+        await interaction.response.edit_message(view=None)
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                for item in self.children:
+                    item.disabled = True
+                await self.message.edit(view=self)
+            except discord.NotFound:
+                pass
+
+
 @tree.command(name="help", description="Show help and usage info")
 async def help_command(interaction: discord.Interaction):
-
     if interaction.guild is None:
-        await interaction.response.send_message(f"I don't currently support DMs!")
+        await interaction.response.send_message("I don't currently support DMs!", ephemeral=True)
         return
 
     is_admin = interaction.user.guild_permissions.manage_messages
+    embeds_list = []
 
-    embed = discord.Embed(
+    embed_page_1 = discord.Embed(
         title="LinkChecker Bot Help",
         description="I monitor and scan links in messages and embeds. Malicious links are deleted and logged automatically.",
         color=discord.Color.blurple()
     )
-
-    embed.add_field(
+    embed_page_1.add_field(
         name="General Commands",
-        value="• `/ping`\n• `/help`\n Rest of the commands are available to moderators only.",
+        value="• `/ping` - Show bot latency.\n"
+              "• `/help` - Show this help menu.\n"
+              "Other commands are for moderators only.",
         inline=False
     )
+    
+    if is_admin:
+        embed_page_1.add_field(
+            name="Core Moderation Tools",
+            value="• `/manual check_link <url>` - Manually scan a URL.\n"
+                  "• `/manual check_file <file>` - Manually scan an attachment.\n"
+                  "• `/violations show <user>` - Show violations for a user.\n"
+                  "• `/stats show` - Show bot stats.\n"
+                  "• `/stats reset` - Reset bot stats.",
+            inline=False
+        )
+    embeds_list.append(embed_page_1)
 
     if is_admin:
-        embed.add_field(
-            name="Moderation Tools",
-            value=(
-                "• `/config show`\n"
-                "• `/config edit`\n"
-                "• `/config reload`\n"
-                "• `/config toggle_debug`\n"
-                "• `/manual check_link`\n"
-                "• `/manual check_file`\n"
-                "• `/violations show <user>`\n"
-                "• `/stats show`\n"
-                "• `/stats reset`\n"
-                "• `/fuckup last`\n"
-                "• `/fuckup all`\n"
-                "• `/fuckup log`\n"
-            ),
+        embed_page_2 = discord.Embed(
+            title="Admin: Server & Config",
+            color=discord.Color.gold()
+        )
+        embed_page_2.add_field(
+            name="Channel Moderation",
+            value="• `/moderate lockdown <duration> <reason>` - Lock a channel.\n"
+                  "• `/moderate unlock` - Unlock a channel manually.\n"
+                  "• `/panic_stop` - Stop the bot in an emergency.",
+            inline=False
+        )
+        embed_page_2.add_field(
+            name="Guild-Specific Config",
+            value="• `/config_guild set_log_channel [channel]` - Set this server's log channel.\n"
+                  "• `/config_guild set_responsible_moderator [user]` - Set this server's mod to ping.",
+            inline=False
+        )
+        embed_page_2.add_field(
+            name="Global Bot Config",
+            value="• `/config show` - Show global config.\n"
+                  "• `/config edit <key> <value>` - Edit global config.\n"
+                  "• `/config reload` - Reload global config from file.\n"
+                  "• `/config toggle_debug` - Toggle debug mode.",
+            inline=False
+        )
+        embed_page_2.add_field(
+            name="Bot Control (Owner Only)",
+            value="• `/say <message> <channel> <reply>` - Make the bot say something.",
+            inline=False
+        )
+        embeds_list.append(embed_page_2)
+
+        embed_page_3 = discord.Embed(
+            title="Admin: List Management",
+            color=discord.Color.green()
+        )
+        embed_page_3.add_field(
+            name="Allowlist",
+            value="• `/allowlist add <domain>`\n"
+                  "• `/allowlist remove <domain>`\n"
+                  "• `/allowlist show`\n"
+                  "• `/allowlist reload`",
+            inline=False
+        )
+        embed_page_3.add_field(
+            name="Denylist",
+            value="• `/denylist add <domain>`\n"
+                  "• `/denylist remove <domain>`\n"
+                  "• `/denylist show`\n"
+                  "• `/denylist reload`",
+            inline=False
+        )
+        embed_page_3.add_field(
+            name="Shorteners",
+            value="• `/shortenerlist add <domain>`\n"
+                  "• `/shortenerlist remove <domain>`\n"
+                  "• `/shortenerlist show`\n"
+                  "• `/shortenerlist reload`",
+            inline=False
+        )
+        embeds_list.append(embed_page_3)
+
+        embed_page_4 = discord.Embed(
+            title="Admin: Misc & Debug",
+            color=discord.Color.greyple()
+        )
+        embed_page_4.add_field(
+            name="Fuckup Logging",
+            value="• `/fuckup log <reason>`\n"
+                  "• `/fuckup last`\n"
+                  "• `/fuckup all`",
             inline=False
         )
         if DEBUG_MODE:
-            embed.add_field(
-                name="Debugging Tools",
-                value=(
-                    "• `/debug throw_error`\n"
-                    "• `/debug throw_warning`"
-                ),
+            embed_page_4.add_field(
+                name="Debugging Tools (Debug Mode ON)",
+                value="• `/debug throw_error`\n"
+                      "• `/debug throw_warning`",
                 inline=False
             )
+        embeds_list.append(embed_page_4)
 
-        embed.add_field(
-            name="Allowlist Commands",
-            value=(
-                "• `/allowlist add <domain>`\n"
-                "• `/allowlist remove <domain>`\n"
-                "• `/allowlist show`\n"
-                "• `/allowlist reload`"
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="Denylist Commands",
-            value=(
-                "• `/denylist add <domain>`\n"
-                "• `/denylist remove <domain>`\n"
-                "• `/denylist show`\n"
-                "• `/denylist reload`"
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="Shortener Management",
-            value=(
-                "• `/shortenerlist add <domain>`\n"
-                "• `/shortenerlist remove <domain>`\n"
-                "• `/shortenerlist show`\n"
-                "• `/shortenerlist reload`"
-            ),
-            inline=False
-        )
-
-    embed.add_field(
-        name="Notes",
-        value=(
-            "• Links in sent messages, their embeds and edited messages are scanned\n"
-            "• Shortened URLs (e.g. `bit.ly`) are automatically resolved\n"
-            "• Malicious links are denylisted\n"
-            "• Users spamming bad links are timed out and logged"
-        ),
+    embed_page_notes = discord.Embed(
+        title="Bot Functionality Notes",
+        color=discord.Color.blurple()
+    )
+    embed_page_notes.add_field(
+        name="How I work",
+        value="• Links in sent messages, their embeds, and edited messages are scanned.\n"
+              "• Shortened URLs (e.g. `bit.ly`) are automatically resolved.\n"
+              "• Malicious links found by VirusTotal are automatically denylisted.\n"
+              "• Users spamming bad links are timed out and logged.",
         inline=False
     )
+    embeds_list.append(embed_page_notes)
 
-    await interaction.response.send_message(embed=embed)
+    view = HelpView(embeds_list, interaction.user)
+    await interaction.response.send_message(embed=embeds_list[0], view=view, ephemeral=True)
+    
+    view.message = await interaction.original_response()
 
 @moderation_group.command(name="lockdown", description="Initiate a channel lockdown.")
 @app_commands.describe(duration="How long to lock the channel (10s, 5m, 2h, 1d)", reason="Reason for the lockdown")
@@ -2471,7 +2561,7 @@ async def on_message_edit(before, after):
         for url in new_urls:
             await scan_queue.put((after, url))
 
-        content_is_allowlisted = bool(new_urls) and all(extract_domain(url) in ALLOWLIST for url in new_urls)   
+        content_is_allowlisted = bool(after_urls) and all(extract_domain(url) in ALLOWLIST for url in after_urls)   
         if content_is_allowlisted:
             log_info(f"All new content links are allowlisted. Skipping embed-only links for bot/webhook edit from {after.author}.")
         else:
@@ -2507,7 +2597,7 @@ async def on_message_edit(before, after):
     for url in new_urls:
         await scan_queue.put((after, url))
 
-    content_is_allowlisted = bool(new_urls) and all(extract_domain(url) in ALLOWLIST for url in new_urls)   
+    content_is_allowlisted = bool(after_urls) and all(extract_domain(url) in ALLOWLIST for url in after_urls)   
     if content_is_allowlisted:
         log_info(f"All new content links are allowlisted. Skipping embed-only links for edited message from {after.author}.")
         print(f"All new content links are allowlisted. Skipping embed-only links for edited message from {after.author}.")
