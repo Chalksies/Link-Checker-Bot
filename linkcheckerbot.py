@@ -1739,47 +1739,6 @@ async def violations_remove(interaction: discord.Interaction, user: discord.User
         log_error(f"Failed to remove violation: {e}")
         await interaction.followup.send(f"An error occurred: {e}")
 
-@violations_group.command(name="migrate_ids", description="[One-time] Add unique IDs to all old violation entries.")
-async def violations_migrate(interaction: discord.Interaction):
-    if interaction.guild is None:
-        await interaction.response.send_message(f"I don't currently support DMs!")
-        return
-
-    if not interaction.user.guild_permissions.manage_messages:
-        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=True)
-
-    try:
-        if not os.path.exists(VIOLATION_LOG_PATH):
-            await interaction.followup.send("No violations file found. Nothing to do.")
-            return
-        
-        with open(VIOLATION_LOG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        updated_count = 0
-        for user_id, violations in data.items():
-            for v in violations:
-                if v.get('id') is None:
-                    v['id'] = str(uuid.uuid4())
-                    updated_count += 1
-        
-        if updated_count == 0:
-            await interaction.followup.send("All violations already have IDs. No migration needed.")
-            return
-
-        with open(VIOLATION_LOG_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-        await interaction.followup.send(f"**Migration complete!**\nAdded unique IDs to {updated_count} old violation entries.")
-        log_info(f"Violation log migration run by {interaction.user}, updated {updated_count} entries.")
-
-    except Exception as e:
-        log_error(f"Failed to migrate violations: {e}")
-        await interaction.followup.send(f"An error occurred during migration: {e}")
-
 @manual_group.command(name="check_link", description="Manually scan a link via the VirusTotal API")
 @app_commands.describe(url="The full URL to scan (including http/https)")
 async def debug_manual_check(interaction: discord.Interaction, url: str):
