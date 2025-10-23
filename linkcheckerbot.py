@@ -1636,8 +1636,8 @@ async def config_guild_set_mod(interaction: discord.Interaction, user: Optional[
         await interaction.response.send_message(f"This server's responsible moderator has been set to {user.mention}.")
     
 @violations_group.command(name="show", description="Show all violations for a user")
-@app_commands.describe(user="The user to view violations for")
-async def violations_show(interaction: discord.Interaction, user: discord.User):
+@app_commands.describe(user="The user to view violations for (optional)")
+async def violations_show(interaction: discord.Interaction, user: Optional[discord.User]):
 
     if interaction.guild is None:
         await interaction.response.send_message(f"I don't currently support DMs!")
@@ -1655,29 +1655,54 @@ async def violations_show(interaction: discord.Interaction, user: discord.User):
         with open(VIOLATION_LOG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        user_id = str(user.id)
-        violations = data.get(user_id, [])
 
-        if not violations:
-            await interaction.response.send_message(f"No violations recorded for {user.mention}.")
-            return
+        violations_list = []
+        embed_title = ""
+
+        if user:
+            user_id = str(user.id)
+            violations_list = data.get(user_id, [])
+            embed_title = f"Violations for {user}"
+
+            if not violations_list:
+                await interaction.response.send_message(f"No violations recorded for {user.mention}.")
+                return
+        else:
+            embed_title = "All Violations"
+            all_violations = []
+            for uid, vlist in data.items():
+                all_violations.extend(vlist)
+            
+            if not all_violations:
+                await interaction.response.send_message("No violations have been recorded yet.")
+                return
+
+            all_violations.sort(key=lambda x: x["timestamp"], reverse=True)
+            violations_list = all_violations
+
 
         #build response
         embed = discord.Embed(
             title=f"Violations for {user}",
-            description=f"Total: {len(violations)}",
+            description=f"Total: {len(violations_list)}",
             color=discord.Color.red()
         )
 
-        for v in violations[:10]:
+        for v in violations_list[:10]:
+            username = v.get("username", "Unknown User")
+
+            value_text = f"**User:** `{username}`\n" \
+                         f"**ID:** `{v.get('id', 'NO_ID')}`\n" \
+                         f"**Link:** `{v['url']}`"
+            
             embed.add_field(
                 name=v["timestamp"],
-                value=f"**ID:** `{v.get('id', 'NO_ID')}`\n**Link:** `{v['url']}`",
+                value=value_text,
                 inline=False
             )
 
-        if len(violations) > 10:
-            embed.set_footer(text=f"Showing first 10 of {len(violations)} violations. Use /violations remove <id> to remove one.")
+        if len(violations_list) > 10:
+            embed.set_footer(text=f"Showing first 10 of {len(violations_list)} violations. Use /violations remove <user ><id> to remove one.")
         else:
             embed.set_footer(text=f"Use /violations remove <id> to remove one.")
 
