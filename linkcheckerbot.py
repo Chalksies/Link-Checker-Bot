@@ -15,6 +15,7 @@ import tomli
 import tomli_w
 import json
 import time
+import uuid
 import tldextract
 
 class TTLCache:
@@ -616,6 +617,7 @@ def normalize_url(raw_url: str) -> str:
 
 def log_violation(user: discord.User, url: str):
     entry = {
+        "id": str(uuid.uuid4()),
         "username": str(user),
         "url": url,
         "timestamp": datetime.now(timezone.utc).isoformat()
@@ -1670,18 +1672,113 @@ async def violations_show(interaction: discord.Interaction, user: discord.User):
         for v in violations[:10]:
             embed.add_field(
                 name=v["timestamp"],
-                value=f"[{v['url']}]",
+                value=f"**ID:** `{v.get('id', 'NO_ID')}`\n**Link:** `{v['url']}`",
                 inline=False
             )
 
         if len(violations) > 10:
-            embed.set_footer(text=f"Showing first 10 of {len(violations)} violations")
+            embed.set_footer(text=f"Showing first 10 of {len(violations)} violations. Use /violations remove <id> to remove one.")
+        else:
+            embed.set_footer(text=f"Use /violations remove <id> to remove one.")
 
         await interaction.response.send_message(embed=embed)
 
     except Exception as e:
         log_error(f"Failed to show violations: {e}")
         await interaction.response.send_message("Error loading violations log.", ephemeral=True)
+
+@violations_group.command(name="remove", description="Remove a specific violation entry by its ID")
+@app_commands.describe(user="The user who the violation was logged against", violation_id="The unique ID of the violation to remove")
+async def violations_remove(interaction: discord.Interaction, user: discord.User, violation_id: str):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        if not os.path.exists(VIOLATION_LOG_PATH):
+            await interaction.followup.send("No violations have been recorded yet.")
+            return
+        
+        with open(VIOLATION_LOG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        user_id = str(user.id)
+        violations = data.get(user_id, [])
+
+        if not violations:
+            await interaction.followup.send(f"No violations recorded for {user.mention}.")
+            return
+
+        violation_to_remove = None
+        for v in violations:
+            if v.get('id') == violation_id:
+                violation_to_remove = v
+                break
+        
+        if violation_to_remove is None:
+            await interaction.followup.send(f"Could not find a violation with ID `{violation_id}` for {user.mention}.")
+            return
+
+        violations.remove(violation_to_remove)
+        data[user_id] = violations
+        
+        with open(VIOLATION_LOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        await interaction.followup.send(f"Successfully removed violation `{violation_id}` (Link: `{violation_to_remove['url']}`) for {user.mention}.")
+        log_info(f"Violation {violation_id} removed for user {user.id} by {interaction.user}.")
+
+    except Exception as e:
+        log_error(f"Failed to remove violation: {e}")
+        await interaction.followup.send(f"An error occurred: {e}")
+
+@violations_group.command(name="migrate_ids", description="[One-time] Add unique IDs to all old violation entries.")
+async def violations_migrate(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        if not os.path.exists(VIOLATION_LOG_PATH):
+            await interaction.followup.send("No violations file found. Nothing to do.")
+            return
+        
+        with open(VIOLATION_LOG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        updated_count = 0
+        for user_id, violations in data.items():
+            for v in violations:
+                if v.get('id') is None:
+                    v['id'] = str(uuid.uuid4())
+                    updated_count += 1
+        
+        if updated_count == 0:
+            await interaction.followup.send("All violations already have IDs. No migration needed.")
+            return
+
+        with open(VIOLATION_LOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        await interaction.followup.send(f"**Migration complete!**\nAdded unique IDs to {updated_count} old violation entries.")
+        log_info(f"Violation log migration run by {interaction.user}, updated {updated_count} entries.")
+
+    except Exception as e:
+        log_error(f"Failed to migrate violations: {e}")
+        await interaction.followup.send(f"An error occurred during migration: {e}")
 
 @manual_group.command(name="check_link", description="Manually scan a link via the VirusTotal API")
 @app_commands.describe(url="The full URL to scan (including http/https)")
@@ -2210,7 +2307,7 @@ async def help_command(interaction: discord.Interaction):
     embeds_list.append(embed_page_notes)
 
     view = HelpView(embeds_list, interaction.user)
-    await interaction.response.send_message(embed=embeds_list[0], view=view, ephemeral=True)
+    await interaction.response.send_message(embed=embeds_list[0], view=view)
     
     view.message = await interaction.original_response()
 
