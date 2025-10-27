@@ -2075,12 +2075,30 @@ async def stats_reset_command(interaction: discord.Interaction):
 @fuckups_group.command(name="log", description="Log a fuckup")
 @app_commands.describe(reason="Reason of the fuckup")
 async def fuckup_log_command(interaction: discord.Interaction, reason:str):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+    
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
     log_fuckup(reason)
     await interaction.response.send_message(f"Logged a fuckup: **{reason}**")
     log_info(f"Logged a fuckup: {reason}")
 
 @fuckups_group.command(name="last", description="Show last fuckup")
 async def lastfuckup(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+    
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+    
     last = get_last_fuckup()
     if not last:
         await interaction.response.send_message("No fuckups logged yet.")
@@ -2097,6 +2115,15 @@ async def lastfuckup(interaction: discord.Interaction):
 
 @fuckups_group.command(name="all", description="Show all fuckups")
 async def allfuckups(interaction: discord.Interaction):
+
+    if interaction.guild is None:
+        await interaction.response.send_message(f"I don't currently support DMs!")
+        return
+    
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+    
     logs = get_all_fuckups()
     if not logs:
         await interaction.response.send_message("No fuckups logged yet.")
@@ -2385,7 +2412,7 @@ async def unlock(interaction: discord.Interaction):
         return
 
     if not interaction.user.guild_permissions.manage_messages:
-        await interaction.response.send_message("You are not authorized to do this.")
+        await interaction.response.send_message("You are not authorized to do this.", ephemeral=True)
         return
 
     channel = interaction.channel
