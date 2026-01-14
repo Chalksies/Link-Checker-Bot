@@ -189,7 +189,7 @@ def load_stats():
     with open(REACTS_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def save_stats(stats):
+def save_emoji_stats(stats):
     with open(REACTS_PATH, "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=4)
 
@@ -2755,7 +2755,7 @@ async def on_raw_reaction_add(payload):
     else:
         emoji_data[guild_id][emoji_key] = 1
         
-    save_stats(emoji_data)
+    save_emoji_stats(emoji_data)
 
 @client.event
 async def on_raw_reaction_remove(payload):
@@ -2772,6 +2772,6 @@ async def on_raw_reaction_remove(payload):
         if emoji_data[guild_id][emoji_key] <= 0:
             del emoji_data[guild_id][emoji_key]
             
-        save_stats(emoji_data)
+        save_emoji_stats(emoji_data)
 
 client.run(DISCORD_TOKEN)
