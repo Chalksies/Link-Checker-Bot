@@ -155,6 +155,7 @@ MAX_LOG_LINES = config["structure"]["max_log_lines"]
 VIOLATION_LOG_PATH = config["structure"]["violation_path"]
 STATS_PATH = config["structure"]["stats_path"]
 FUCKUPS_PATH = config["structure"]["fuckup_path"]
+REACTS_PATH = config["structure"]["react_stats"]
 
 VERIFIED_ROLE_NAME = config["moderation"]["verified_role_name"]
 MEMBER_ROLE_NAME = config["moderation"]["member_role_name"]
@@ -181,6 +182,16 @@ def load_json_list(path, key="domains", default=None):
 def save_json_list(path, domain_set, key="domains"):
     with open(path, "w") as f:
         json.dump({key: sorted(domain_set)}, f, indent=4)
+
+def load_stats():
+    if not os.path.exists(REACTS_PATH):
+        return {}
+    with open(REACTS_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_stats(stats):
+    with open(REACTS_PATH, "w", encoding="utf-8") as f:
+        json.dump(stats, f, indent=4)
 
 ALLOWLIST = load_json_list(ALLOWLIST_PATH, default=DEFAULT_ALLOWLIST)
 DENYLIST = load_json_list(DENYLIST_PATH, default={"domains": []})
@@ -248,7 +259,6 @@ def load_lockdowns_from_disk() -> dict:
                 except Exception:
                     continue
 
-                # parse unlock time safely
                 unlock_at = None
                 if data.get("unlock_at"):
                     try:
@@ -298,6 +308,7 @@ lockdowns = load_lockdowns_from_disk()
 GUILD_SETTINGS_PATH = "guild_settings.json"
 GUILD_SETTINGS: Dict[str, Dict[str, Any]] = {}
 
+emoji_data = load_stats()
 
 def load_guild_settings():
     global GUILD_SETTINGS
@@ -331,7 +342,6 @@ def get_guild_setting(guild: discord.Guild, key: str, fallback=None):
 
 
 def get_log_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
-    # prefer per-guild setting, fallback to global LOG_CHANNEL_ID
     channel_id = get_guild_setting(guild, "log_channel_id", LOG_CHANNEL_ID)
     if not channel_id:
         return None
@@ -339,7 +349,6 @@ def get_log_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
 
 
 async def get_responsible_moderator(guild: discord.Guild) -> Optional[discord.User]:
-    # prefer per-guild setting, fallback to global RESPONSIBLE_MODERATOR_ID
     mod_id = get_guild_setting(guild, "responsible_moderator_id", RESPONSIBLE_MODERATOR_ID)
     if not mod_id:
         return None
@@ -363,14 +372,12 @@ def log_and_rotate(message: str, level=logging.INFO):
     log_line_count += 1
 
     if log_line_count >= MAX_LOG_LINES:
-        #rotate
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         rotated_path = os.path.join(LOGGING_PATH, f"{timestamp}.log")
 
         log_file_handler.close()
         os.rename(latest_log_path, rotated_path)
 
-        #start fresh log
         new_handler = logging.FileHandler(latest_log_path, mode='a', encoding='utf-8')
         new_handler.setFormatter(log_formatter)
 
@@ -423,6 +430,7 @@ processed_message_urls = TTLCache()
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.reactions = True
 client = discord.Client(intents=intents)
 user_violations = defaultdict(list)  # track user violations
 
@@ -439,6 +447,7 @@ stats_group = app_commands.Group(name="stats", description="View and manipulate 
 fuckups_group = app_commands.Group(name="fuckup", description="Log and view fuckups.")
 moderation_group = app_commands.Group(name="moderate", description="Moderate users anc channels.")
 guild_config_group = app_commands.Group(name="config_guild", description="Manage this server's specific settings")
+reactions_group = app_commands.Group(name="reactions", description="See reaction stats on this server")
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
@@ -451,6 +460,7 @@ tree.add_command(stats_group)
 tree.add_command(fuckups_group)
 tree.add_command(moderation_group)
 tree.add_command(guild_config_group)
+tree.add_command(reactions_group)
 
 def read_fuckups() -> List[Dict[str, Any]]:
     try:
@@ -1073,7 +1083,6 @@ async def check_user_violations(user, message_channel):
                 f"{user.mention}, you have been timed out for 20 minutes for posting multiple malicious links in a short period of time."
             )
         except discord.Forbidden:
-            #ping responsible moderator if we can't timeout
             responsible_mod = await get_responsible_moderator(guild)
             log_warning(f"Failed to timeout user {user} due to missing permissions.")
             if responsible_mod:
@@ -1106,7 +1115,6 @@ async def on_ready():
     await tree.sync()
     await client.change_presence(activity=discord.CustomActivity(name=PRESENCE_TEXT))
 
-    # load per-guild settings (if any)
     try:
         load_guild_settings()
     except Exception:
@@ -1115,7 +1123,6 @@ async def on_ready():
     log_info("Re-initializing persistent lockdowns...")
     now = datetime.now(timezone.utc)
     
-    # Iterate through a copy since we may modify the dict
     for guild_id, channels in list(lockdowns.items()):
         guild = client.get_guild(guild_id)
         if not guild:
@@ -1136,22 +1143,17 @@ async def on_ready():
             prev_verified = data["previous_overwrite_verified"]
             
             if unlock_at <= now:
-                # This lockdown expired while the bot was offline. Unlock immediately.
                 log_info(f"Lockdown for {channel.name} expired while offline. Unlocking now.")
                 await _unlock_channel_logic(guild, channel, prev_everyone, prev_member, prev_verified, reason="Lockdown expired (offline)")
-                # _unlock_channel_logic will remove it from `lockdowns` and save
             else:
-                # This lockdown is still active. Re-create the task.
                 remaining_seconds = (unlock_at - now).total_seconds()
                 log_info(f"Resuming lockdown for {channel.name}. Unlocking in {remaining_seconds:.0f}s.")
                 
                 task = client.loop.create_task(
                     auto_unlock(guild, channel, prev_everyone, prev_member, prev_verified, delay=remaining_seconds)
                 )
-                # Store the new task in the in-memory dict
                 lockdowns[guild_id][channel_id]["task"] = task
                 
-    # Save any cleanups (e.g., of old guilds/channels)
     save_lockdowns_to_disk(lockdowns)
 
     print(f"Logged in as {client.user}")
@@ -2508,6 +2510,18 @@ async def say_command(interaction: discord.Interaction, message: str, channel: d
         except Exception as e:
             await interaction.response.send_message(f"Failed to send message: {e}", ephemeral=True)
             return
+        
+@reactions_group.command(name="check_emoji", description="Check the stats for a specific emoji")
+@app_commands.describe(emoji="The emoji you want to check")
+async def check_emoji(interaction: discord.Interaction, emoji: str):
+    guild_id = str(interaction.guild_id) 
+    
+    count = 0
+    if guild_id in emoji_data and emoji in emoji_data[guild_id]:
+        count = emoji_data[guild_id][emoji]
+        
+    await interaction.response.send_message(f"The emoji {emoji} has been reacted with {count} times.")
+
 #----------------------- message handling -----------------------
 
 @client.event
@@ -2566,11 +2580,25 @@ To stop receiving messages from this bot, reply “STOP” to this message.
                 """)
                 return
             
+    if message.author.guild_permissions.manage_messages:
+        urls = extract_message_urls(message)
+        increment_stat("messages_skipped")
+        if urls:
+            log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
+            print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
+        
+        if message.attachments:
+            log_info(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
+            print(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
+        else:
+            return
+        return
+            
     if message.webhook_id or message.author.bot:
         urls = extract_message_urls(message)
         
         for url in urls:
-            await scan_queue.put((message, url))
+              await scan_queue.put((message, url))
 
         if message.embeds:
             content_is_allowlisted = bool(urls) and all(extract_domain(url) in ALLOWLIST for url in urls)
@@ -2600,22 +2628,6 @@ To stop receiving messages from this bot, reply “STOP” to this message.
                     await attachment_vt_queue.put((message, attachment))
                 else:
                     log_info(f"Skipping attachment check for {attachment.filename} from {message.author}({message.author.id}) because of the extension.")
-        return
-
-    if message.author.guild_permissions.manage_messages:
-        urls = extract_message_urls(message)
-        increment_stat("messages_skipped")
-        if not urls:
-            pass
-        else:
-            log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
-            print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
-        
-        if message.attachments:
-            log_info(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
-            print(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
-        else:
-            return
         return
     
     urls = extract_message_urls(message)
@@ -2665,6 +2677,20 @@ async def on_message_edit(before, after):
     before_attachments = {a.id for a in before.attachments}
     new_attachments = [a for a in after.attachments if a.id not in before_attachments]
 
+    if after.author.guild_permissions.manage_messages:
+        if new_urls or new_embed_urls:
+            log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
+            print(f"Skipping link edit check for {after.author} due to mod permissions.")
+        
+        for attachment in new_attachments:
+            if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+                if attachment.size > MAX_FILE_SIZE:
+                    log_info(f"Skipping attachment {attachment.filename} due to size.")
+                    continue
+                increment_stat("attachments_scanned")
+                await attachment_vt_queue.put((after, attachment))
+        return
+
     if after.webhook_id or after.author.bot:
         for url in new_urls:
             await scan_queue.put((after, url))
@@ -2678,20 +2704,6 @@ async def on_message_edit(before, after):
                 embed_scanned_messages.add(after.id, ttl_seconds=600)
                 for url in final_new_embed_urls:
                     await scan_queue.put((after, url))
-        
-        for attachment in new_attachments:
-            if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
-                if attachment.size > MAX_FILE_SIZE:
-                    log_info(f"Skipping attachment {attachment.filename} due to size.")
-                    continue
-                increment_stat("attachments_scanned")
-                await attachment_vt_queue.put((after, attachment))
-        return
-
-    if after.author.guild_permissions.manage_messages:
-        if new_urls or new_embed_urls:
-            log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
-            print(f"Skipping link edit check for {after.author} due to mod permissions.")
         
         for attachment in new_attachments:
             if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
@@ -2726,5 +2738,40 @@ async def on_message_edit(before, after):
             await attachment_vt_queue.put((after, attachment))
         else:
             log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
+
+@client.event
+async def on_raw_reaction_add(payload):
+    if not payload.guild_id:
+        return
+    
+    guild_id = str(payload.guild_id)
+    emoji_key = str(payload.emoji)
+
+    if guild_id not in emoji_data:
+        emoji_data[guild_id] = {}
+
+    if emoji_key in emoji_data[guild_id]:
+        emoji_data[guild_id][emoji_key] += 1
+    else:
+        emoji_data[guild_id][emoji_key] = 1
+        
+    save_stats(emoji_data)
+
+@client.event
+async def on_raw_reaction_remove(payload):
+
+    if not payload.guild_id:
+        return
+    
+    guild_id = str(payload.guild_id)
+    emoji_key = str(payload.emoji)
+
+    if guild_id in emoji_data and emoji_key in emoji_data[guild_id]:
+        emoji_data[guild_id][emoji_key] -= 1
+        
+        if emoji_data[guild_id][emoji_key] <= 0:
+            del emoji_data[guild_id][emoji_key]
+            
+        save_stats(emoji_data)
 
 client.run(DISCORD_TOKEN)
