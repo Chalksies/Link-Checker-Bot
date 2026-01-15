@@ -2580,7 +2580,7 @@ To stop receiving messages from this bot, reply “STOP” to this message.
                 """)
                 return
             
-    if message.author.guild_permissions.manage_messages:
+    if message.author.guild_permissions.manage_messages or message.author.bot:
         urls = extract_message_urls(message)
         increment_stat("messages_skipped")
         if urls:
@@ -2594,7 +2594,7 @@ To stop receiving messages from this bot, reply “STOP” to this message.
             return
         return
             
-    if message.webhook_id or message.author.bot:
+    if message.webhook_id:
         urls = extract_message_urls(message)
         
         for url in urls:
@@ -2677,7 +2677,7 @@ async def on_message_edit(before, after):
     before_attachments = {a.id for a in before.attachments}
     new_attachments = [a for a in after.attachments if a.id not in before_attachments]
 
-    if after.author.guild_permissions.manage_messages:
+    if after.author.guild_permissions.manage_messages or after.author.bot:
         if new_urls or new_embed_urls:
             log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
             print(f"Skipping link edit check for {after.author} due to mod permissions.")
@@ -2691,7 +2691,7 @@ async def on_message_edit(before, after):
                 await attachment_vt_queue.put((after, attachment))
         return
 
-    if after.webhook_id or after.author.bot:
+    if after.webhook_id:
         for url in new_urls:
             await scan_queue.put((after, url))
 
