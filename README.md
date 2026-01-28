@@ -8,12 +8,10 @@
 - Timing out users on malicious spam detection.
 - Various helpful commands.
 - Manual usage of the API.
-----------------------------------------
 ## Requirements:
 - A Discord Application
 - Python
 - Pip
-----------------------------------------
 ## Setting up:  
 - Create bot via Discord Developer Portal
 - Clone this repository
@@ -21,12 +19,11 @@
 - Run the script once and follow instructions
 - Set up a denylist.json if desired.
 - Run the python script again to start the bot.
-----------------------------------------
 ## Usage: 
 - The bot is fully automatic.
 - You can manipulate the allowlist, denylist and shortener list through slash commands.
 ----------------------------------------
-[!WARNING]
-Warning: This bot is in active development. Expect errors.
+> [!WARNING]
+> This bot is in active development. Expect errors.
 ----------------------------------------
 *Made for r/traaaaaaannnnnnnnnns2 official Discord server by Chalk.*
