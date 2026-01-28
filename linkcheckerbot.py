@@ -2580,20 +2580,6 @@ To stop receiving messages from this bot, reply “STOP” to this message.
                 """)
                 return
             
-    if message.author.guild_permissions.manage_messages or message.author.bot:
-        urls = extract_message_urls(message)
-        increment_stat("messages_skipped")
-        if urls:
-            log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
-            print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
-        
-        if message.attachments:
-            log_info(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
-            print(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
-        else:
-            return
-        return
-            
     if message.webhook_id:
         urls = extract_message_urls(message)
         
@@ -2630,6 +2616,20 @@ To stop receiving messages from this bot, reply “STOP” to this message.
                     log_info(f"Skipping attachment check for {attachment.filename} from {message.author}({message.author.id}) because of the extension.")
         return
     
+    if message.author.bot or message.author.guild_permissions.manage_messages:
+        urls = extract_message_urls(message)
+        increment_stat("messages_skipped")
+        if urls:
+            log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
+            print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
+        
+        if message.attachments:
+            log_info(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
+            print(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
+        else:
+            return
+        return
+    
     urls = extract_message_urls(message)
     for url in urls:
         await scan_queue.put((message, url))
@@ -2659,7 +2659,7 @@ To stop receiving messages from this bot, reply “STOP” to this message.
                     increment_stat("attachments_scanned")
                     await attachment_vt_queue.put((message, attachment))
                 else:
-                    log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
+                    log_info(f"Skipping attachment check for {attachment.filename} from {message.author}({message.author.id}) because of the extension.")
     
 @client.event
 async def on_message_edit(before, after):
@@ -2677,33 +2677,10 @@ async def on_message_edit(before, after):
     before_attachments = {a.id for a in before.attachments}
     new_attachments = [a for a in after.attachments if a.id not in before_attachments]
 
-    if after.author.guild_permissions.manage_messages or after.author.bot:
+    if after.author.bot or after.author.guild_permissions.manage_messages:
         if new_urls or new_embed_urls:
             log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
             print(f"Skipping link edit check for {after.author} due to mod permissions.")
-        
-        for attachment in new_attachments:
-            if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
-                if attachment.size > MAX_FILE_SIZE:
-                    log_info(f"Skipping attachment {attachment.filename} due to size.")
-                    continue
-                increment_stat("attachments_scanned")
-                await attachment_vt_queue.put((after, attachment))
-        return
-
-    if after.webhook_id:
-        for url in new_urls:
-            await scan_queue.put((after, url))
-
-        content_is_allowlisted = bool(after_urls) and all(extract_domain(url) in ALLOWLIST for url in after_urls)   
-        if content_is_allowlisted:
-            log_info(f"All new content links are allowlisted. Skipping embed-only links for bot/webhook edit from {after.author}.")
-        else:
-            final_new_embed_urls = new_embed_urls - new_urls
-            if final_new_embed_urls:
-                embed_scanned_messages.add(after.id, ttl_seconds=600)
-                for url in final_new_embed_urls:
-                    await scan_queue.put((after, url))
         
         for attachment in new_attachments:
             if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
@@ -2738,6 +2715,29 @@ async def on_message_edit(before, after):
             await attachment_vt_queue.put((after, attachment))
         else:
             log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
+
+    if after.webhook_id:
+        for url in new_urls:
+            await scan_queue.put((after, url))
+
+        content_is_allowlisted = bool(after_urls) and all(extract_domain(url) in ALLOWLIST for url in after_urls)   
+        if content_is_allowlisted:
+            log_info(f"All new content links are allowlisted. Skipping embed-only links for bot/webhook edit from {after.author}.")
+        else:
+            final_new_embed_urls = new_embed_urls - new_urls
+            if final_new_embed_urls:
+                embed_scanned_messages.add(after.id, ttl_seconds=600)
+                for url in final_new_embed_urls:
+                    await scan_queue.put((after, url))
+        
+        for attachment in new_attachments:
+            if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+                if attachment.size > MAX_FILE_SIZE:
+                    log_info(f"Skipping attachment {attachment.filename} due to size.")
+                    continue
+                increment_stat("attachments_scanned")
+                await attachment_vt_queue.put((after, attachment))
+        return
 
 @client.event
 async def on_raw_reaction_add(payload):

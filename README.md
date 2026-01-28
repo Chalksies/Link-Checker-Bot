@@ -1,6 +1,6 @@
 # Link Checker Discord Bot (Using VirusTotal API)
 
-Features: 
+## Features: 
 - Scaning messages for links, both on new message and on edits.
 - Resolving shortened links before scan.
 - An allowlist and denylist for links.
@@ -9,7 +9,12 @@ Features:
 - Various helpful commands.
 - Manual usage of the API.
 ----------------------------------------
-Setting up:  
+## Requirements:
+- A Discord Application
+- Python
+- Pip
+----------------------------------------
+## Setting up:  
 - Create bot via Discord Developer Portal
 - Clone this repository
 - Run `pip install -r requirements.txt` inside the folder, preferably in a venv
@@ -17,10 +22,11 @@ Setting up:
 - Set up a denylist.json if desired.
 - Run the python script again to start the bot.
 ----------------------------------------
-Usage: 
+## Usage: 
 - The bot is fully automatic.
 - You can manipulate the allowlist, denylist and shortener list through slash commands.
 ----------------------------------------
+[!WARNING]
 Warning: This bot is in active development. Expect errors.
 ----------------------------------------
-Made for r/traaaaaaannnnnnnnnns2 official Discord server by Chalk.
+*Made for r/traaaaaaannnnnnnnnns2 official Discord server by Chalk.*
