@@ -1,0 +1,14 @@
+{
+  "messages_scanned": 0,
+  "messages_skipped": 0,
+  "virustotal_scans": 0,
+  "urls_scanned": 0,
+  "attachments_scanned": 0,
+  "malicious_urls": 0,
+  "malicious_attachments": 0,
+  "messages_deleted": 0,
+  "shorteners_expanded": 0,
+  "violations_logged": 0,
+  "allowlist_hits": 0,
+  "denylist_hits": 0
+}

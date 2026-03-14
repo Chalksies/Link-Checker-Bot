@@ -1,0 +1,42 @@
+[virustotal]
+api_key = "VIRUSTOTAL API KEY HERE"
+scan_sleep = 15
+scan_interval_seconds = 5
+
+[moderation]
+max_violations = 3
+violation_window_minutes = 2
+log_channel_id = CHANNEL ID FOR LOGGING
+threshold = 2
+verified_role_name = "Verified" 
+member_role_name = "Member"
+
+[bot]
+discord_token = "BOT DISCORD TOKEN HERE"
+responsible_moderator_id = USER ID FOR RESPONSIBLE MODERATOR
+silly_mode = false
+debug_mode = false
+scannable_file_extensions = [
+    ".exe",
+    ".dll",
+    ".bin",
+    ".dat",
+    ".scr",
+    ".zip",
+    ".rar",
+    ".tar.gz",
+    ".py",
+]
+max_file_scan_size_mb = 30
+presence = "Bot online."
+
+[structure]
+allowlist_path = "allowlist.json"
+denylist_path = "denylist.json"
+shortener_list_path = "shortener.json"
+logging_dir = "logs"
+max_log_lines = 5000
+violation_path = "violations.json"
+stats_path = "stats.json"
+fuckup_path = "fuckups.json"
+react_stats = "reactions.json"

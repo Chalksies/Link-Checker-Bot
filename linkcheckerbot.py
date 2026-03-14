@@ -11,12 +11,21 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from urllib.parse import urlparse, urlunparse
+from pathlib import Path
 import tomli
 import tomli_w
 import json
 import time
 import uuid
 import tldextract
+import shutil
+import sys
+
+cwd = Path.cwd()
+script_dir = Path(__file__).parent.resolve()
+if cwd != script_dir:
+    print(f"Heads up! Changing working directory from {cwd} to script directory {script_dir}!")
+    os.chdir(script_dir)
 
 class TTLCache:
     def __init__(self):
@@ -41,65 +50,6 @@ class TTLCache:
     def __len__(self) -> int:
         return len(self._data)
 
-DEFAULT_ALLOWLIST = {
-    "domains": [
-        "discord.com",
-        "discordapp.com",
-        "youtube.com",
-        "youtu.be",
-        "google.com",
-        "tenor.com",
-        "wikipedia.org"
-    ]
-}
-
-DEFAULT_SHORTENERS = {
-    "domains": [
-        "bit.ly", 
-        "tinyurl.com", 
-        "t.co", 
-        "goo.gl", 
-        "is.gd", 
-        "ow.ly", 
-        "buff.ly"
-    ]
-}
-
-DEFAULT_CONFIG = """
-[bot]
-discord_token = "YOUR_DISCORD_TOKEN"
-silly_mode = false
-debug_mode = false
-responsible_moderator_id = 0            #optional, user ID of the responsible moderator for the bot
-scannable_file_extensions = [".exe", ".dll", ".bin", ".dat", ".scr", ".zip", ".rar", ".tar.gz"]
-max_file_scan_size_mb = 30    
-presence = "Bot is online."
-
-[virustotal]
-api_key = "YOUR_VIRUSTOTAL_API_KEY"
-scan_sleep = 15
-scan_interval_seconds = 5
-
-[moderation]
-log_channel_id = 0                 #channel ID for the bot to log its actions
-max_violations = 3
-violation_window_minutes = 2
-threshold = 2
-verified_role_name = "Verified"    #role name for verified users. has no effect on scanning
-member_role_name = "Member"      #role name for member users. has no effect on scanning.
-
-[structure]
-allowlist_path = "allowlist.json"
-denylist_path = "denylist.json"
-shortener_list_path = "shortener.json"
-logging_dir = "logs"
-max_log_lines = 5000
-violation_path = "violations.json"
-stats_path = "stats.json"
-fuckup_path = "fuckups.json"
-        """
-
-
 DEFAULT_STATS = {
     "messages_scanned": 0,
     "messages_skipped": 0,
@@ -116,16 +66,24 @@ DEFAULT_STATS = {
 }
 
 CONFIG_PATH = "config.toml"
+TEMPLATE_CONFIG = 'config.example.toml'
 
 if not os.path.exists(CONFIG_PATH):
-    with open(CONFIG_PATH, "w") as f:
-        f.write(DEFAULT_CONFIG)
-    print("Default config.toml created. Please edit it with your settings and restart the bot.")
-    exit(1)
+    print(f"Warning: {CONFIG_PATH} not found!")
+    
+    if os.path.exists(TEMPLATE_CONFIG):
+        print(f"Creating a default {CONFIG_PATH} from template...")
+        shutil.copy(TEMPLATE_CONFIG, CONFIG_PATH)
+        print("Please fill out your details in config.toml and restart the bot.")
+        sys.exit(0)
+    else:
+        print(f"Error: Neither {CONFIG_PATH} nor {TEMPLATE_CONFIG} could be found.")
+        sys.exit(1)
 
 def load_config():
     try:
-        return tomli.load(open(CONFIG_PATH, "rb"))
+        with open(CONFIG_PATH, "rb") as f: return
+        tomli.load(f)
     except Exception as e:
         print(f"Failed to load config.toml: {e}")
         exit(1)
@@ -135,7 +93,7 @@ DISCORD_TOKEN = config["bot"]["discord_token"]
 VT_API_KEY = config["virustotal"]["api_key"]
 RESPONSIBLE_MODERATOR_ID = config["bot"]["responsible_moderator_id"]
 DEBUG_MODE = config["bot"]["debug_mode"]
-PRESENCE_TEXT = config ["bot"]["presence"]
+PRESENCE_TEXT = config["bot"]["presence"]
 
 LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
 SILLY_MODE = bool(config["bot"]["silly_mode"])
@@ -164,8 +122,33 @@ def save_config():
     with open(CONFIG_PATH, "wb") as f:
         tomli_w.dump(config, f)
 
+TEMPLATE_ALLOWLIST = "allowlist.default.json"
+TEMPLATE_DENYLIST = "denylist.default.json"
+TEMPLATE_SHORTENER = "shortenerlist.default.json"
+
 if not os.path.exists(ALLOWLIST_PATH):
-    print("Default allowlist created, review and modify if needed.")
+    print("Allowlist not found. Creating default.")
+
+    if os.path.exists(TEMPLATE_ALLOWLIST):
+        shutil.copy(TEMPLATE_ALLOWLIST, ALLOWLIST_PATH)
+    else:
+        print("Warning: Template allowlist not found. Creating an empty allowlist. Please review and populate it through the bot as needed.")
+        with open(ALLOWLIST_PATH, "w") as f:
+            json.dump({"domains": []}, f, indent=4)
+
+if not os.path.exists(DENYLIST_PATH):
+    print("Warning: Denylist not found. Creating an empty denylist. Please review and populate it through the bot as needed.")
+    with open(DENYLIST_PATH, "w") as f:
+        json.dump({"domains": []}, f, indent=4)
+
+if not os.path.exists(SHORTENER_PATH):
+    print("Shortener list not found. Creating default.")
+    if os.path.exists(TEMPLATE_SHORTENER):
+        shutil.copy(TEMPLATE_SHORTENER, SHORTENER_PATH)
+    else:
+        print("Warning: Template shortener list not found. Creating an empty shortener list. Please review and populate it through the bot as needed.")
+        with open(SHORTENER_PATH, "w") as f:
+            json.dump({"domains": []}, f, indent=4)
 
 def load_json_list(path, key="domains", default=None):
     if not os.path.exists(path):
@@ -183,7 +166,7 @@ def save_json_list(path, domain_set, key="domains"):
     with open(path, "w") as f:
         json.dump({key: sorted(domain_set)}, f, indent=4)
 
-def load_stats():
+def load_emoji_stats():
     if not os.path.exists(REACTS_PATH):
         return {}
     with open(REACTS_PATH, "r", encoding="utf-8") as f:
@@ -193,12 +176,11 @@ def save_emoji_stats(stats):
     with open(REACTS_PATH, "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=4)
 
-ALLOWLIST = load_json_list(ALLOWLIST_PATH, default=DEFAULT_ALLOWLIST)
-DENYLIST = load_json_list(DENYLIST_PATH, default={"domains": []})
-SHORTENERS = load_json_list(SHORTENER_PATH, default =DEFAULT_SHORTENERS)
+ALLOWLIST = load_json_list(ALLOWLIST_PATH)
+DENYLIST = load_json_list(DENYLIST_PATH)
+SHORTENERS = load_json_list(SHORTENER_PATH)
 
-#link regex
-URL_REGEX = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
+URL_REGEX = re.compile(r'\b(?:https?://|www\.)[^\s<>"]+')
 
 latest_log_path = os.path.join(LOGGING_PATH, "latest.log")
 
@@ -308,7 +290,7 @@ lockdowns = load_lockdowns_from_disk()
 GUILD_SETTINGS_PATH = "guild_settings.json"
 GUILD_SETTINGS: Dict[str, Dict[str, Any]] = {}
 
-emoji_data = load_stats()
+emoji_data = load_emoji_stats()
 
 def load_guild_settings():
     global GUILD_SETTINGS
@@ -529,16 +511,12 @@ def extract_domain(url: str) -> str:
 
 def extract_message_urls(message) -> set:
     urls = set(re.findall(URL_REGEX, message.content or ""))
+    urls = [link.rstrip("().,;?!") for link in urls]
     normalized_urls = set()
     for url in urls:
         increment_stat("urls_scanned")
         normalized_urls.add(normalize_url(url))
     return normalized_urls
-
-def strip_unbalanced_parenthesis(url):
-    while url.endswith(")") and url.count("(") < url.count(")"):
-        url = url[:-1]
-    return url
 
 def extract_embed_urls(message) -> set:
     urls = set()
@@ -618,8 +596,6 @@ def normalize_url(raw_url: str) -> str:
             parsed.query,
             parsed.fragment
         ))
-
-        normalized = strip_unbalanced_parenthesis(normalized)
 
         return normalized
     except Exception:
@@ -959,8 +935,7 @@ async def vt_worker():
                             if responsible_moderator:
                                 await msg.channel.send(f"{responsible_moderator.mention} I failed to delete deferred message: {e}")
 
-                    #log result to moderation channel
-                    if log_channel: # log_channel is already fetched from above
+                    if log_channel:
                         await log_channel.send(
                             f"`{url}` flagged as malicious by VirusTotal ({detections} detections).\n"
                             f"Original + {delete_count} duplicate messages were removed.\n"
@@ -998,10 +973,8 @@ async def attachment_vt_worker():
                 log_info(f"Scanning attachment: {attachment.filename} from {message.author} ({message.author.id})")
                 print(f"Scanning attachment: {attachment.filename} from {message.author} ({message.author.id})")
                 
-                #read file content into memory
                 file_bytes = await attachment.read()
                 
-                #scan the file using vt
                 report = await virustotal_scan_file(session, file_bytes, attachment.filename, message.channel, guild)
                 stats = report["data"]["attributes"]["stats"]
                 detections = stats.get("malicious", 0)

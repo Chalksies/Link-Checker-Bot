@@ -2,5 +2,8 @@
 .vscode/
 listmigrator.py
 logs/
-*.toml
-*.json
+config.toml
+*list.json
+shortener.json
+stats.json
+violations.json
