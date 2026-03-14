@@ -2640,7 +2640,6 @@ async def on_message_edit(before, after):
     for url in new_urls:
         await scan_queue.put((after, url))
 
-    # Embed scanning is disabled, so only new message URLs are scanned.
     for attachment in new_attachments:
         if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
             if attachment.size > MAX_FILE_SIZE:
@@ -2656,7 +2655,6 @@ async def on_message_edit(before, after):
         for url in new_urls:
             await scan_queue.put((after, url))
 
-        # Embed scanning is disabled, skip embed-only URLs for bot/webhook edit.
         for attachment in new_attachments:
             if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
                 if attachment.size > MAX_FILE_SIZE:
