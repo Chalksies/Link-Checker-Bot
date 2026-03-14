@@ -2582,26 +2582,13 @@ To stop receiving messages from this bot, reply “STOP” to this message.
             
     if message.webhook_id:
         urls = extract_message_urls(message)
-        
+
         for url in urls:
-              await scan_queue.put((message, url))
+            await scan_queue.put((message, url))
 
         if message.embeds:
-            content_is_allowlisted = bool(urls) and all(extract_domain(url) in ALLOWLIST for url in urls)
-
-            if content_is_allowlisted:
-                log_info(f"All content links are allowlisted. Skipping embed-only links for webhook/bot message from {message.author}.")
-                print(f"All content links are allowlisted. Skipping embed-only links for webhook/bot message from {message.author}.")
-            else:
-                embed_urls = extract_embed_urls(message)
-                new_embed_urls = embed_urls - urls
-
-                # mark this message as having had its embeds scanned to avoid races
-                if new_embed_urls:
-                    embed_scanned_messages.add(message.id, ttl_seconds=600)
-
-                for url in new_embed_urls:
-                    await scan_queue.put((message, url))
+            log_info(f"Embed link scanning disabled; skipping embed-only URLs for webhook/bot message from {message.author}.")
+            print(f"Embed link scanning disabled; skipping embed-only URLs for webhook/bot message from {message.author}.")
 
         if message.attachments:
             for attachment in message.attachments:
@@ -2635,18 +2622,8 @@ To stop receiving messages from this bot, reply “STOP” to this message.
         await scan_queue.put((message, url))
 
     if message.embeds:
-        content_is_allowlisted = bool(urls) and all(extract_domain(url) in ALLOWLIST for url in urls)
-        if content_is_allowlisted:
-            log_info(f"All content links are allowlisted. Skipping embed-only links for {message.author}.")
-            print(f"All content links are allowlisted. Skipping embed-only links for {message.author}.")
-        else:
-            embed_urls = extract_embed_urls(message)
-            new_embed_urls = embed_urls - urls
-            
-            # mark embeds as scanned first to avoid a race where scan_worker also enqueues them
-            embed_scanned_messages.add(message.id, ttl_seconds=600)
-            for url in new_embed_urls:
-                await scan_queue.put((message, url))
+        log_info(f"Embed link scanning disabled; skipping embed-only URLs for message from {message.author}.")
+        print(f"Embed link scanning disabled; skipping embed-only URLs for message from {message.author}.")
 
     if message.attachments:
             for attachment in message.attachments:
@@ -2670,15 +2647,11 @@ async def on_message_edit(before, after):
     after_urls = extract_message_urls(after)
     new_urls = after_urls - before_urls
 
-    before_embed_urls = extract_embed_urls(before)
-    after_embed_urls = extract_embed_urls(after)
-    new_embed_urls = after_embed_urls - before_embed_urls
-
     before_attachments = {a.id for a in before.attachments}
     new_attachments = [a for a in after.attachments if a.id not in before_attachments]
 
     if after.author.bot or after.author.guild_permissions.manage_messages:
-        if new_urls or new_embed_urls:
+        if new_urls:
             log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
             print(f"Skipping link edit check for {after.author} due to mod permissions.")
         
@@ -2694,17 +2667,7 @@ async def on_message_edit(before, after):
     for url in new_urls:
         await scan_queue.put((after, url))
 
-    content_is_allowlisted = bool(after_urls) and all(extract_domain(url) in ALLOWLIST for url in after_urls)   
-    if content_is_allowlisted:
-        log_info(f"All new content links are allowlisted. Skipping embed-only links for edited message from {after.author}.")
-        print(f"All new content links are allowlisted. Skipping embed-only links for edited message from {after.author}.")
-    else:
-        final_new_embed_urls = new_embed_urls - new_urls
-        if final_new_embed_urls:
-            embed_scanned_messages.add(after.id, ttl_seconds=600)
-            for url in final_new_embed_urls:
-                await scan_queue.put((after, url))
-
+    # Embed scanning is disabled, so only new message URLs are scanned.
     for attachment in new_attachments:
         if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
             if attachment.size > MAX_FILE_SIZE:
@@ -2720,16 +2683,7 @@ async def on_message_edit(before, after):
         for url in new_urls:
             await scan_queue.put((after, url))
 
-        content_is_allowlisted = bool(after_urls) and all(extract_domain(url) in ALLOWLIST for url in after_urls)   
-        if content_is_allowlisted:
-            log_info(f"All new content links are allowlisted. Skipping embed-only links for bot/webhook edit from {after.author}.")
-        else:
-            final_new_embed_urls = new_embed_urls - new_urls
-            if final_new_embed_urls:
-                embed_scanned_messages.add(after.id, ttl_seconds=600)
-                for url in final_new_embed_urls:
-                    await scan_queue.put((after, url))
-        
+        # Embed scanning is disabled, skip embed-only URLs for bot/webhook edit.
         for attachment in new_attachments:
             if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
                 if attachment.size > MAX_FILE_SIZE:
