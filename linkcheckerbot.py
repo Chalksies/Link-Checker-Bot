@@ -82,8 +82,7 @@ if not os.path.exists(CONFIG_PATH):
 
 def load_config():
     try:
-        with open(CONFIG_PATH, "rb") as f: return
-        tomli.load(f)
+        return tomli.load(open(CONFIG_PATH, "rb"))
     except Exception as e:
         print(f"Failed to load config.toml: {e}")
         exit(1)
