@@ -77,7 +77,7 @@ if not os.path.exists(CONFIG_PATH):
         print("Please fill out your details in config.toml and restart the bot.")
         sys.exit(0)
     else:
-        print(f"Error: Neither {CONFIG_PATH} nor {TEMPLATE_CONFIG} could be found.")
+        print(f"Error: Neither {CONFIG_PATH} nor {TEMPLATE_CONFIG} could be found. Try reinstalling the bot.")
         sys.exit(1)
 
 def load_config():
@@ -95,6 +95,7 @@ DEBUG_MODE = config["bot"]["debug_mode"]
 PRESENCE_TEXT = config["bot"]["presence"]
 
 LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
+TRACK_CHANNEL_ID = int(config["moderation"]["track_channel_id"])
 SILLY_MODE = bool(config["bot"]["silly_mode"])
 SCAN_SLEEP = config["virustotal"]["scan_sleep"]
 SCAN_INTERVAL = config["virustotal"]["scan_interval_seconds"]
@@ -103,6 +104,7 @@ VIOLATION_WINDOW = timedelta(minutes=config["moderation"]["violation_window_minu
 SCANNABLE_EXTENSIONS = tuple(config["moderation"].get("scannable_file_extensions", []))
 MAX_FILE_SIZE = config["moderation"].get("max_file_scan_size_mb", 30) * 1024 * 1024
 DELETION_THRESHOLD = config["moderation"]["threshold"]
+TRACKED_NOTIFICATION_COOLDOWN_SECONDS = config["moderation"].get("tracked_notification_cooldown_seconds", 3600)
 
 ALLOWLIST_PATH = config["structure"]["allowlist_path"]
 DENYLIST_PATH = config["structure"]["denylist_path"]
@@ -113,6 +115,7 @@ VIOLATION_LOG_PATH = config["structure"]["violation_path"]
 STATS_PATH = config["structure"]["stats_path"]
 FUCKUPS_PATH = config["structure"]["fuckup_path"]
 REACTS_PATH = config["structure"]["react_stats"]
+TRACKED_USERS_PATH = config["structure"].get("tracked_users_path", "tracked_users.json")
 
 VERIFIED_ROLE_NAME = config["moderation"]["verified_role_name"]
 MEMBER_ROLE_NAME = config["moderation"]["member_role_name"]
@@ -165,6 +168,25 @@ def save_json_list(path, domain_set, key="domains"):
     with open(path, "w") as f:
         json.dump({key: sorted(domain_set)}, f, indent=4)
 
+def load_tracked_users():
+    if not os.path.exists(TRACKED_USERS_PATH):
+        with open(TRACKED_USERS_PATH, "w", encoding="utf-8") as f:
+            json.dump({}, f, indent=2)
+        return {}
+    try:
+        with open(TRACKED_USERS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {str(gid): set(int(uid) for uid in uids) for gid, uids in data.items()}
+    except Exception:
+        return {}
+
+
+def save_tracked_users():
+    serializable = {gid: [str(uid) for uid in sorted(uids)] for gid, uids in TRACKED_USERS.items()}
+    with open(TRACKED_USERS_PATH, "w", encoding="utf-8") as f:
+        json.dump(serializable, f, indent=2)
+
+
 def load_emoji_stats():
     if not os.path.exists(REACTS_PATH):
         return {}
@@ -178,6 +200,7 @@ def save_emoji_stats(stats):
 ALLOWLIST = load_json_list(ALLOWLIST_PATH)
 DENYLIST = load_json_list(DENYLIST_PATH)
 SHORTENERS = load_json_list(SHORTENER_PATH)
+TRACKED_USERS = load_tracked_users()
 
 URL_REGEX = re.compile(r'\b(?:https?://|www\.)[^\s<>"]+')
 
@@ -328,6 +351,47 @@ def get_log_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
         return None
     return guild.get_channel(int(channel_id))
 
+def get_track_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    channel_id = get_guild_setting(guild, "tracking_channel_id", TRACK_CHANNEL_ID)
+    if not channel_id:
+        return None
+    return guild.get_channel(int(channel_id))
+
+
+def get_tracked_user_ids(guild: discord.Guild) -> set:
+    return TRACKED_USERS.get(str(guild.id), set())
+
+
+async def notify_tracked_user_activity(message):
+    if message.guild is None:
+        return
+
+    tracked = TRACKED_USERS.get(str(message.guild.id))
+    if not tracked or message.author.id not in tracked:
+        return
+
+    cooldown_key = f"{message.guild.id}:{message.author.id}"
+    first_notification = cooldown_key not in tracked_user_cooldowns
+    tracked_user_cooldowns.add(cooldown_key, ttl_seconds=TRACKED_NOTIFICATION_COOLDOWN_SECONDS)
+    if not first_notification:
+        return
+
+    track_channel = get_track_channel(message.guild)
+    content = (
+        f"Tracked user {message.author.mention} ({message.author.id}) sent a message in "
+        f"{message.channel.mention}.\n"
+        f"Jump link: {message.jump_url}\n"
+        f"I will wait {TRACKED_NOTIFICATION_COOLDOWN_SECONDS // 60} minutes of inactivity before notifying again."
+    )
+
+    if track_channel:
+        try:
+            await track_channel.send(content)
+        except Exception as e:
+            log_error(f"Failed to send tracked user notification: {e}")
+    else:
+        log_info(f"Tracked user {message.author} in guild {message.guild.id} but no tracking channel is configured.")
+
 
 async def get_responsible_moderator(guild: discord.Guild) -> Optional[discord.User]:
     mod_id = get_guild_setting(guild, "responsible_moderator_id", RESPONSIBLE_MODERATOR_ID)
@@ -408,6 +472,7 @@ scans_in_progress: dict[str, list[discord.Message]] = {}
 embed_scanned_messages = TTLCache()
 deleted_messages = TTLCache()
 processed_message_urls = TTLCache()
+tracked_user_cooldowns = TTLCache()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -429,6 +494,7 @@ fuckups_group = app_commands.Group(name="fuckup", description="Log and view fuck
 moderation_group = app_commands.Group(name="moderate", description="Moderate users anc channels.")
 guild_config_group = app_commands.Group(name="config_guild", description="Manage this server's specific settings")
 reactions_group = app_commands.Group(name="reactions", description="See reaction stats on this server")
+track_group = app_commands.Group(name="track", description="Track users and notify moderators")
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
@@ -442,6 +508,7 @@ tree.add_command(fuckups_group)
 tree.add_command(moderation_group)
 tree.add_command(guild_config_group)
 tree.add_command(reactions_group)
+tree.add_command(track_group)
 
 def read_fuckups() -> List[Dict[str, Any]]:
     try:
@@ -1415,6 +1482,7 @@ async def config_show(interaction: discord.Interaction):
     embed.add_field(name="SCAN_INTERVAL", value=f"{SCAN_INTERVAL}s", inline=False)
     embed.add_field(name="MAX_MALICIOUS_MESSAGES", value=str(MAX_MALICIOUS_MESSAGES), inline=False)
     embed.add_field(name="VIOLATION_WINDOW", value=f"{int(VIOLATION_WINDOW.total_seconds() // 60)} minutes", inline=False)
+    embed.add_field(name="TRACKED_USER_COOLDOWN", value=f"{TRACKED_NOTIFICATION_COOLDOWN_SECONDS}s", inline=False)
     embed.add_field(name="LOG_CHANNEL_ID", value=f"`{LOG_CHANNEL_ID}`", inline=False)
     embed.add_field(name="RESPONSIBLE_MODERATOR_ID", value=f"`{RESPONSIBLE_MODERATOR_ID}`", inline=False)
 
@@ -1446,15 +1514,18 @@ async def config_reload(interaction: discord.Interaction):
     global VIOLATION_WINDOW
     global SCANNABLE_EXTENSIONS
     global MAX_FILE_SIZE
-    global ALLOWLIST_PATH 
-    global DENYLIST_PATH 
-    global SHORTENER_PATH 
-    global LOGGING_PATH 
-    global MAX_LOG_LINES 
-    global VIOLATION_LOG_PATH 
-    global STATS_PATH 
+    global ALLOWLIST_PATH
+    global DENYLIST_PATH
+    global SHORTENER_PATH
+    global LOGGING_PATH
+    global MAX_LOG_LINES
+    global VIOLATION_LOG_PATH
+    global STATS_PATH
     global FUCKUPS_PATH
     global DELETION_THRESHOLD
+    global TRACKED_USERS_PATH
+    global TRACKED_NOTIFICATION_COOLDOWN_SECONDS
+    global TRACKED_USERS
 
     config = load_config()
 
@@ -1462,7 +1533,7 @@ async def config_reload(interaction: discord.Interaction):
     VT_API_KEY = config["virustotal"]["api_key"]
     RESPONSIBLE_MODERATOR_ID = config["bot"]["responsible_moderator_id"]
     DEBUG_MODE = config["bot"]["debug_mode"]
-    PRESENCE_TEXT = config ["bot"]["presence"]
+    PRESENCE_TEXT = config["bot"]["presence"]
 
     LOG_CHANNEL_ID = int(config["moderation"]["log_channel_id"])
     SILLY_MODE = bool(config["bot"]["silly_mode"])
@@ -1473,6 +1544,7 @@ async def config_reload(interaction: discord.Interaction):
     SCANNABLE_EXTENSIONS = tuple(config["moderation"].get("scannable_file_extensions", []))
     MAX_FILE_SIZE = config["moderation"].get("max_file_scan_size_mb", 30) * 1024 * 1024
     DELETION_THRESHOLD = config["moderation"]["threshold"]
+    TRACKED_NOTIFICATION_COOLDOWN_SECONDS = config["moderation"].get("tracked_notification_cooldown_seconds", 3600)
 
     ALLOWLIST_PATH = config["structure"]["allowlist_path"]
     DENYLIST_PATH = config["structure"]["denylist_path"]
@@ -1482,6 +1554,8 @@ async def config_reload(interaction: discord.Interaction):
     VIOLATION_LOG_PATH = config["structure"]["violation_path"]
     STATS_PATH = config["structure"]["stats_path"]
     FUCKUPS_PATH = config["structure"]["fuckup_path"]
+    TRACKED_USERS_PATH = config["structure"].get("tracked_users_path", TRACKED_USERS_PATH)
+    TRACKED_USERS = load_tracked_users()
     await client.change_presence(activity=discord.CustomActivity(name=PRESENCE_TEXT))
     await interaction.response.send_message("Configuration reloaded from file.")
 
@@ -1588,6 +1662,26 @@ async def config_guild_set_log(interaction: discord.Interaction, channel: Option
         GUILD_SETTINGS[gid]["log_channel_id"] = channel.id
         save_guild_settings()
         await interaction.response.send_message(f"This server's log channel has been set to {channel.mention}.")
+
+@guild_config_group.command(name="set_tracking_channel", description="Set this server's private channel for user tracking notifications")
+@app_commands.describe(channel="The channel to send user tracking notifications to (or None to use global default)")
+async def config_guild_set_tracking_channel(interaction: discord.Interaction, channel: Optional[discord.TextChannel]):
+    if not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message("You are not authorized to do this.", ephemeral=True)
+        return
+    
+    gid = str(interaction.guild.id)
+    if gid not in GUILD_SETTINGS:
+        GUILD_SETTINGS[gid] = {}
+
+    if channel is None:
+        GUILD_SETTINGS[gid].pop("tracking_channel_id", None)
+        save_guild_settings()
+        await interaction.response.send_message("This server's user tracking notification channel has been reset. I will now use the global default.", ephemeral=True)
+    else:
+        GUILD_SETTINGS[gid]["tracking_channel_id"] = channel.id
+        save_guild_settings()
+        await interaction.response.send_message(f"This server's user tracking notification channel has been set to {channel.mention}.")
 
 @guild_config_group.command(name="set_responsible_moderator", description="Set this server's responsible moderator")
 @app_commands.describe(user="The moderator to ping for issues (or None to use global default)")
@@ -2494,6 +2588,97 @@ async def check_emoji(interaction: discord.Interaction, emoji: str):
         
     await interaction.response.send_message(f"The emoji {emoji} has been reacted with {count} times.")
 
+@track_group.command(name="add", description="Add a user to the tracked list")
+@app_commands.describe(user="The user to track")
+async def track_add(interaction: discord.Interaction, user: discord.User):
+    if interaction.guild is None:
+        await interaction.response.send_message("I don't currently support DMs!")
+        return
+
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    gid = str(interaction.guild.id)
+    if gid not in TRACKED_USERS:
+        TRACKED_USERS[gid] = set()
+
+    if user.id in TRACKED_USERS[gid]:
+        await interaction.response.send_message(f"{user} is already being tracked.", ephemeral=True)
+        return
+
+    TRACKED_USERS[gid].add(user.id)
+    save_tracked_users()
+    await interaction.response.send_message(f"Now tracking {user.mention} ({user.id}).")
+
+@track_group.command(name="remove", description="Remove a user from the tracked list")
+@app_commands.describe(user="The user to stop tracking")
+async def track_remove(interaction: discord.Interaction, user: discord.User):
+    if interaction.guild is None:
+        await interaction.response.send_message("I don't currently support DMs!")
+        return
+
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    gid = str(interaction.guild.id)
+    if user.id not in TRACKED_USERS.get(gid, set()):
+        await interaction.response.send_message(f"{user} is not currently tracked.", ephemeral=True)
+        return
+
+    TRACKED_USERS[gid].remove(user.id)
+    save_tracked_users()
+    await interaction.response.send_message(f"Stopped tracking {user.mention} ({user.id}).")
+
+@track_group.command(name="show", description="Show tracked users for this server")
+async def track_show(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("I don't currently support DMs!")
+        return
+
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    gid = str(interaction.guild.id)
+    tracked_ids = TRACKED_USERS.get(gid, set())
+    if not tracked_ids:
+        await interaction.response.send_message("No users are currently being tracked in this server.")
+        return
+
+    members = []
+    for user_id in sorted(tracked_ids):
+        member = interaction.guild.get_member(int(user_id))
+        if member:
+            members.append(f"• {member.mention} ({user_id})")
+        else:
+            members.append(f"• `<@{user_id}>` ({user_id})")
+
+    await interaction.response.defer()
+    chunks = [members[i:i + 25] for i in range(0, len(members), 25)]
+    for i, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title=f"Tracked Users (Page {i + 1}/{len(chunks)})",
+            description="\n".join(chunk),
+            color=discord.Color.orange()
+        )
+        await interaction.followup.send(embed=embed)
+
+@track_group.command(name="reload", description="Reload the tracked user list from disk")
+async def track_reload(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message("I don't currently support DMs!")
+        return
+
+    if not interaction.user.guild_permissions.manage_messages:
+        await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
+        return
+
+    global TRACKED_USERS
+    TRACKED_USERS = load_tracked_users()
+    await interaction.response.send_message("Tracked user list reloaded from file.")
+
 #----------------------- message handling -----------------------
 
 @client.event
@@ -2506,6 +2691,7 @@ async def on_message(message):
         return
 
     increment_stat("messages_scanned")
+    await notify_tracked_user_activity(message)
 
     if SILLY_MODE and client.user in message.mentions:
         reply_author = None if message.reference is None or client.get_channel(message.reference.channel_id) is None else (await client.get_channel(message.reference.channel_id).fetch_message(message.reference.message_id)).author

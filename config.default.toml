@@ -7,9 +7,11 @@ scan_interval_seconds = 5
 max_violations = 3
 violation_window_minutes = 2
 log_channel_id = CHANNEL ID FOR LOGGING
+track_channel_id = CHANNEL ID FOR TRACKING
 threshold = 2
 verified_role_name = "Verified" 
 member_role_name = "Member"
+tracked_notification_cooldown_seconds = 3600
 
 [bot]
 discord_token = "BOT DISCORD TOKEN HERE"
@@ -34,6 +36,7 @@ presence = "Bot online."
 allowlist_path = "allowlist.json"
 denylist_path = "denylist.json"
 shortener_list_path = "shortener.json"
+tracked_users_path = "tracked_users.json"
 logging_dir = "logs"
 max_log_lines = 5000
 violation_path = "violations.json"
