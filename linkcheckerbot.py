@@ -592,9 +592,6 @@ def extract_embed_urls(message) -> set:
     for embed in message.embeds:
         candidates: List[str] = []
 
-        if getattr(embed, "url", None):
-            candidates.append(embed.url)
-
         for attr in ("title", "description"):
             val = getattr(embed, attr, None)
             if val:
@@ -605,9 +602,6 @@ def extract_embed_urls(message) -> set:
             if val:
                 candidates.extend(re.findall(URL_REGEX, val))
 
-        footer = getattr(embed, "footer", None)
-        if footer and getattr(footer, "text", None):
-            candidates.extend(re.findall(URL_REGEX, footer.text))
 
         for u in candidates:
             try:
@@ -2745,8 +2739,9 @@ To stop receiving messages from this bot, reply “STOP” to this message.
             await scan_queue.put((message, url))
 
         if message.embeds:
-            log_info(f"Embed link scanning disabled; skipping embed-only URLs for webhook/bot message from {message.author}.")
-            print(f"Embed link scanning disabled; skipping embed-only URLs for webhook/bot message from {message.author}.")
+            embed_urls = extract_embed_urls(message)
+            for url in embed_urls:
+                await scan_queue.put((message, url))
 
         if message.attachments:
             for attachment in message.attachments:
@@ -2780,8 +2775,9 @@ To stop receiving messages from this bot, reply “STOP” to this message.
         await scan_queue.put((message, url))
 
     if message.embeds:
-        log_info(f"Embed link scanning disabled; skipping embed-only URLs for message from {message.author}.")
-        print(f"Embed link scanning disabled; skipping embed-only URLs for message from {message.author}.")
+        embed_urls = extract_embed_urls(message)
+        for url in embed_urls:
+            await scan_queue.put((message, url))
 
     if message.attachments:
             for attachment in message.attachments:
@@ -2805,11 +2801,15 @@ async def on_message_edit(before, after):
     after_urls = extract_message_urls(after)
     new_urls = after_urls - before_urls
 
+    before_embed_urls = extract_embed_urls(before)
+    after_embed_urls = extract_embed_urls(after)
+    new_embed_urls = after_embed_urls - before_embed_urls
+
     before_attachments = {a.id for a in before.attachments}
     new_attachments = [a for a in after.attachments if a.id not in before_attachments]
 
     if after.author.bot or after.author.guild_permissions.manage_messages:
-        if new_urls:
+        if new_urls or new_embed_urls:
             log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
             print(f"Skipping link edit check for {after.author} due to mod permissions.")
         
@@ -2825,6 +2825,9 @@ async def on_message_edit(before, after):
     for url in new_urls:
         await scan_queue.put((after, url))
 
+    for url in new_embed_urls:
+        await scan_queue.put((after, url))
+
     for attachment in new_attachments:
         if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
             if attachment.size > MAX_FILE_SIZE:
@@ -2838,6 +2841,9 @@ async def on_message_edit(before, after):
 
     if after.webhook_id:
         for url in new_urls:
+            await scan_queue.put((after, url))
+
+        for url in new_embed_urls:
             await scan_queue.put((after, url))
 
         for attachment in new_attachments:
