@@ -2738,7 +2738,8 @@ To stop receiving messages from this bot, reply “STOP” to this message.
         for url in urls:
             await scan_queue.put((message, url))
 
-        if message.embeds:
+        all_allowlisted = all(extract_domain(url) in ALLOWLIST for url in urls) if urls else False
+        if message.embeds and not all_allowlisted:
             embed_urls = extract_embed_urls(message)
             for url in embed_urls:
                 await scan_queue.put((message, url))
@@ -2774,7 +2775,8 @@ To stop receiving messages from this bot, reply “STOP” to this message.
     for url in urls:
         await scan_queue.put((message, url))
 
-    if message.embeds:
+    all_allowlisted = all(extract_domain(url) in ALLOWLIST for url in urls) if urls else False
+    if message.embeds and not all_allowlisted:
         embed_urls = extract_embed_urls(message)
         for url in embed_urls:
             await scan_queue.put((message, url))
@@ -2825,8 +2827,10 @@ async def on_message_edit(before, after):
     for url in new_urls:
         await scan_queue.put((after, url))
 
+    all_allowlisted = all(extract_domain(url) in ALLOWLIST for url in new_urls) if new_urls else False
     for url in new_embed_urls:
-        await scan_queue.put((after, url))
+        if not all_allowlisted:
+            await scan_queue.put((after, url))
 
     for attachment in new_attachments:
         if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
