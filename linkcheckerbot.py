@@ -482,19 +482,71 @@ user_violations = defaultdict(list)  # track user violations
 
 tree = app_commands.CommandTree(client)
 
-allowlist_group = app_commands.Group(name="allowlist", description="Manage the allowlist")
-denylist_group = app_commands.Group(name="denylist", description="Manage the denylist")
-shortener_group = app_commands.Group(name="shortenerlist", description="Manage the shortener list")
-config_group = app_commands.Group(name="config", description="Manage the bot configuration")
-violations_group = app_commands.Group(name="violations", description="Manage and view link violations")
-debug_group = app_commands.Group(name="debug", description="Debugging tools")
-manual_group = app_commands.Group(name="manual", description="Scan URLs/Attachments manually.")
-stats_group = app_commands.Group(name="stats", description="View and manipulate stats.")
-fuckups_group = app_commands.Group(name="fuckup", description="Log and view fuckups.")
-moderation_group = app_commands.Group(name="moderate", description="Moderate users and channels.")
-guild_config_group = app_commands.Group(name="config_guild", description="Manage this server's specific settings")
-reactions_group = app_commands.Group(name="reactions", description="See reaction stats on this server")
-track_group = app_commands.Group(name="track", description="Track users and notify moderators")
+allowlist_group = app_commands.Group(
+    name="allowlist",
+    description="Manage the allowlist",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+denylist_group = app_commands.Group(
+    name="denylist",
+    description="Manage the denylist",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+shortener_group = app_commands.Group(
+    name="shortenerlist",
+    description="Manage the shortener list",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+config_group = app_commands.Group(
+    name="config",
+    description="Manage the bot configuration",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+violations_group = app_commands.Group(
+    name="violations",
+    description="Manage and view link violations",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+debug_group = app_commands.Group(
+    name="debug",
+    description="Debugging tools",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+manual_group = app_commands.Group(
+    name="manual",
+    description="Scan URLs/Attachments manually.",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+stats_group = app_commands.Group(
+    name="stats",
+    description="View and manipulate stats.",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+fuckups_group = app_commands.Group(
+    name="fuckup",
+    description="Log and view fuckups.",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+moderation_group = app_commands.Group(
+    name="moderate",
+    description="Moderate users and channels.",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+guild_config_group = app_commands.Group(
+    name="config_guild",
+    description="Manage this server's specific settings",
+    default_permissions=discord.Permissions(manage_guild=True)
+)
+reactions_group = app_commands.Group(
+    name="reactions",
+    description="See reaction stats on this server",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
+track_group = app_commands.Group(
+    name="track",
+    description="Track users and notify moderators",
+    default_permissions=discord.Permissions(manage_messages=True)
+)
 
 tree.add_command(allowlist_group)
 tree.add_command(denylist_group)
@@ -1650,6 +1702,7 @@ async def config_toggle_debug(interaction: discord.Interaction):
 
 @guild_config_group.command(name="set_log_channel", description="Set this server's private log channel")
 @app_commands.describe(channel="The channel to log to (or None to use global default)")
+@app_commands.default_permissions(manage_messages=True)
 async def config_guild_set_log(interaction: discord.Interaction, channel: Optional[discord.TextChannel]):
     if not interaction.user.guild_permissions.manage_guild:
         await interaction.response.send_message("You are not authorized to do this.", ephemeral=True)
@@ -1670,6 +1723,7 @@ async def config_guild_set_log(interaction: discord.Interaction, channel: Option
 
 @guild_config_group.command(name="set_tracking_channel", description="Set this server's private channel for user tracking notifications")
 @app_commands.describe(channel="The channel to send user tracking notifications to (or None to use global default)")
+@app_commands.default_permissions(manage_messages=True)
 async def config_guild_set_tracking_channel(interaction: discord.Interaction, channel: Optional[discord.TextChannel]):
     if not interaction.user.guild_permissions.manage_guild:
         await interaction.response.send_message("You are not authorized to do this.", ephemeral=True)
@@ -1690,6 +1744,7 @@ async def config_guild_set_tracking_channel(interaction: discord.Interaction, ch
 
 @guild_config_group.command(name="set_responsible_moderator", description="Set this server's responsible moderator")
 @app_commands.describe(user="The moderator to ping for issues (or None to use global default)")
+@app_commands.default_permissions(manage_messages=True)
 async def config_guild_set_mod(interaction: discord.Interaction, user: Optional[discord .User]):
     if not interaction.user.guild_permissions.manage_guild:
         await interaction.response.send_message("You are not authorized to do this.", ephemeral=True)
@@ -1710,6 +1765,7 @@ async def config_guild_set_mod(interaction: discord.Interaction, user: Optional[
     
 @violations_group.command(name="show", description="Show all violations for a user")
 @app_commands.describe(user="The user to view violations for (optional)")
+@app_commands.default_permissions(manage_messages=True)
 async def violations_show(interaction: discord.Interaction, user: Optional[discord.User]):
 
     if interaction.guild is None:
@@ -1787,6 +1843,7 @@ async def violations_show(interaction: discord.Interaction, user: Optional[disco
 
 @violations_group.command(name="remove", description="Remove a specific violation entry by its ID")
 @app_commands.describe(user="The user who the violation was logged against", violation_id="The unique ID of the violation to remove")
+@app_commands.default_permissions(manage_messages=True)
 async def violations_remove(interaction: discord.Interaction, user: discord.User, violation_id: str):
 
     if interaction.guild is None:
@@ -1839,6 +1896,7 @@ async def violations_remove(interaction: discord.Interaction, user: discord.User
 
 @manual_group.command(name="check_link", description="Manually scan a link via the VirusTotal API")
 @app_commands.describe(url="The full URL to scan (including http/https)")
+@app_commands.default_permissions(manage_messages=True)
 async def debug_manual_check(interaction: discord.Interaction, url: str):
 
     if interaction.guild is None:
@@ -1922,6 +1980,7 @@ async def debug_manual_check(interaction: discord.Interaction, url: str):
 
 @manual_group.command(name="check_file", description="Manually scan a file attachment via the VirusTotal API")
 @app_commands.describe(file="The file to scan")
+@app_commands.default_permissions(manage_messages=True)
 async def manual_check_file(interaction: discord.Interaction, file: discord.Attachment):
 
     if interaction.guild is None:
@@ -1987,6 +2046,7 @@ async def manual_check_file(interaction: discord.Interaction, file: discord.Atta
 
 
 @debug_group.command(name="throw_error", description="Manually raise a test exception")
+
 async def debug_throw_error(interaction: discord.Interaction):
 
     if interaction.guild is None:
@@ -2005,6 +2065,7 @@ async def debug_throw_error(interaction: discord.Interaction):
     raise RuntimeError("This is a manually thrown test error.")
 
 @debug_group.command(name="throw_warning", description="Manually trigger a warning log")
+@app_commands.default_permissions(manage_messages=True)
 async def debug_throw_warning(interaction: discord.Interaction):
 
     if interaction.guild is None:
@@ -2050,6 +2111,7 @@ async def ping_command(interaction: discord.Interaction):
     await interaction.edit_original_response(content=None, embed=embed)
 
 @stats_group.command(name="show", description="Show stats")
+@app_commands.default_permissions(manage_messages=True)
 async def stats_show_command(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
@@ -2083,6 +2145,7 @@ async def stats_show_command(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 @stats_group.command(name="reset", description="Reset stats")
+@app_commands.default_permissions(manage_messages=True)
 async def stats_reset_command(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.manage_messages:
         await interaction.response.send_message("You don't have permission to do this.", ephemeral=True)
@@ -2146,6 +2209,7 @@ async def stats_reset_command(interaction: discord.Interaction):
     await interaction.response.send_message("Are you sure you want to reset all stats? This action cannot be undone!", view=view)
 
 @fuckups_group.command(name="log", description="Log a fuckup")
+@app_commands.default_permissions(manage_messages=True)
 @app_commands.describe(reason="Reason of the fuckup")
 async def fuckup_log_command(interaction: discord.Interaction, reason:str):
 
@@ -2162,6 +2226,7 @@ async def fuckup_log_command(interaction: discord.Interaction, reason:str):
     log_info(f"Logged a fuckup: {reason}")
 
 @fuckups_group.command(name="last", description="Show last fuckup")
+@app_commands.default_permissions(manage_messages=True)
 async def lastfuckup(interaction: discord.Interaction):
 
     if interaction.guild is None:
@@ -2187,6 +2252,7 @@ async def lastfuckup(interaction: discord.Interaction):
     )
 
 @fuckups_group.command(name="all", description="Show all fuckups")
+@app_commands.default_permissions(manage_messages=True)
 async def allfuckups(interaction: discord.Interaction):
 
     if interaction.guild is None:
@@ -2283,10 +2349,11 @@ async def help_command(interaction: discord.Interaction):
     
     if is_admin:
         embed_page_1.add_field(
-            name="Core Moderation Tools",
+            name="General Usage",
             value="• `/manual check_link <url>` - Manually scan a URL.\n"
                   "• `/manual check_file <file>` - Manually scan an attachment.\n"
                   "• `/violations show <user>` - Show violations for a user.\n"
+                  "• `/violations remove <id>` - Remove a violation.\n"
                   "• `/stats show` - Show bot stats.\n"
                   "• `/stats reset` - Reset bot stats.",
             inline=False
@@ -2302,6 +2369,8 @@ async def help_command(interaction: discord.Interaction):
             name="Channel Moderation",
             value="• `/moderate lockdown <duration> <reason>` - Lock a channel.\n"
                   "• `/moderate unlock` - Unlock a channel manually.\n"
+                  "• `/moderate purge [amount] [timeframe] [user] [channel]` - Purge messages.\n"
+                  "• `/moderate purge_older [amount] [timeframe] [user] [channel]` - Purge old messages.\n"
                   "• `/panic_stop` - Stop the bot in an emergency.",
             inline=False
         )
@@ -2327,7 +2396,7 @@ async def help_command(interaction: discord.Interaction):
         embeds_list.append(embed_page_2)
 
         embed_page_3 = discord.Embed(
-            title="Admin: List Management",
+            title="List Management",
             color=discord.Color.green()
         )
         embed_page_3.add_field(
@@ -2357,7 +2426,7 @@ async def help_command(interaction: discord.Interaction):
         embeds_list.append(embed_page_3)
 
         embed_page_4 = discord.Embed(
-            title="Admin: Misc & Debug",
+            title="Misc & Debug",
             color=discord.Color.greyple()
         )
         embed_page_4.add_field(
@@ -2397,6 +2466,7 @@ async def help_command(interaction: discord.Interaction):
 
 @moderation_group.command(name="lockdown", description="Initiate a channel lockdown.")
 @app_commands.describe(duration="How long to lock the channel for", reason="Reason for the lockdown")
+@app_commands.default_permissions(manage_messages=True)
 async def lockdown(interaction: discord.Interaction, duration: str, reason: str = "No reason provided"):
 
 
@@ -2479,6 +2549,7 @@ async def lockdown(interaction: discord.Interaction, duration: str, reason: str 
     save_lockdowns_to_disk(lockdowns)
 
 @moderation_group.command(name="unlock", description="Manually unlock the channel early.")
+@app_commands.default_permissions(manage_messages=True)
 async def unlock(interaction: discord.Interaction):
     if interaction.guild is None:
         await interaction.response.send_message("I don't currently support DMs!")
@@ -2677,6 +2748,7 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
                                f"**Removed all?** - {'Yes, deleted all specified messages.' if not time_limit_reached else 'No, time limit reached!'}")
 
 @tree.command(name="panic_stop", description="Panic stop the bot (logout and stop all operations).")
+@app_commands.default_permissions(manage_messages=True)
 async def panic_stop(interaction: discord.Interaction):
     if interaction.guild is None:
         await interaction.response.send_message("I don't currently support DMs!")
@@ -2701,6 +2773,7 @@ async def panic_stop(interaction: discord.Interaction):
 
 @tree.command(name="say", description="Make the bot say something.")
 @app_commands.describe(message="The message for the bot to send", channel="The channel ID to send the message in (defaults to current channel)", reply_to="Message ID to reply to (optional)")
+@app_commands.default_permissions(manage_messages=True)
 async def say_command(interaction: discord.Interaction, message: str, channel: discord.TextChannel = None, reply_to: str = None):
     if interaction.guild is None:
         await interaction.response.send_message("I don't currently support DMs!")
@@ -2741,6 +2814,7 @@ async def check_emoji(interaction: discord.Interaction, emoji: str):
 
 @track_group.command(name="add", description="Add a user to the tracked list")
 @app_commands.describe(user="The user to track")
+@app_commands.default_permissions(manage_messages=True)
 async def track_add(interaction: discord.Interaction, user: discord.User):
     if interaction.guild is None:
         await interaction.response.send_message("I don't currently support DMs!")
@@ -2764,6 +2838,7 @@ async def track_add(interaction: discord.Interaction, user: discord.User):
 
 @track_group.command(name="remove", description="Remove a user from the tracked list")
 @app_commands.describe(user="The user to stop tracking")
+@app_commands.default_permissions(manage_messages=True)
 async def track_remove(interaction: discord.Interaction, user: discord.User):
     if interaction.guild is None:
         await interaction.response.send_message("I don't currently support DMs!")
@@ -2783,6 +2858,7 @@ async def track_remove(interaction: discord.Interaction, user: discord.User):
     await interaction.response.send_message(f"Stopped tracking {user.mention} ({user.id}).")
 
 @track_group.command(name="show", description="Show tracked users for this server")
+@app_commands.default_permissions(manage_messages=True)
 async def track_show(interaction: discord.Interaction):
     if interaction.guild is None:
         await interaction.response.send_message("I don't currently support DMs!")
@@ -2817,6 +2893,7 @@ async def track_show(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed)
 
 @track_group.command(name="reload", description="Reload the tracked user list from disk")
+@app_commands.default_permissions(manage_messages=True)
 async def track_reload(interaction: discord.Interaction):
     if interaction.guild is None:
         await interaction.response.send_message("I don't currently support DMs!")

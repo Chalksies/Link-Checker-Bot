@@ -1,4 +1,4 @@
-# Link Checker Discord Bot (Using VirusTotal API)
+# Moderation & Link Checker Discord Bot (Using VirusTotal API)
 
 ## Features: 
 - Scaning messages for links, both on new message and on edits
@@ -8,7 +8,8 @@
 - Timing out users on malicious spam detection
 - Various helpful commands
 - Manual usage of the API
-- Channel lockdown command
+- Channel lockdown
+- Purge commands (available for messages older than 14)
 ## Requirements:
 - Available device
 - A Discord Application
@@ -23,8 +24,9 @@
 - Set up a denylist.json if desired.
 - Run the python script again to start the bot.
 ## Usage: 
-- The bot is fully automatic.
-- You can manipulate the allowlist, denylist and shortener list through slash commands.
+- Scanning is automatic.
+- You can manipulate the allowlist, denylist and shortener list through slash commands, along with some other configs.
+- Moderation tools are implemented with slash commands.
 ----------------------------------------
 > [!WARNING]
 > This bot is in active development. Expect errors.
