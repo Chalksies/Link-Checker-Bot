@@ -759,18 +759,26 @@ async def virustotal_lookup(session, url, channel, guild: discord.Guild):
 
     #fetch report using base64url-encoded url
     report_url = f"{scan_url}/{vt_url_id(url)}"
-    async with session.get(report_url, headers=headers) as resp:
-        if resp.status != 200:
-            print(f"Report fetch failed for {url}: HTTP {resp.status}")
-            responsible_mod = await get_responsible_moderator(guild)
-            if responsible_mod:
-                await channel.send(
-                   f"{responsible_mod.mention}, I failed to scan a link!\n"
-                    f"(Report fetch failed: HTTP {resp.status})"
-               )
+    
+    for attempt in range(2):
+        async with session.get(report_url, headers=headers) as resp:
+            if resp.status == 200:
+                report = await resp.json()
+                break
+            elif resp.status == 404 and attempt == 0:
+                print(f"Report not ready for {url} (404), retrying...")
+                await asyncio.sleep(SCAN_SLEEP)
+                continue
+            else:
+                print(f"Report fetch failed for {url}: HTTP {resp.status}")
+                responsible_mod = await get_responsible_moderator(guild)
+                if responsible_mod:
+                    await channel.send(
+                       f"{responsible_mod.mention}, I failed to scan a link!\n"
+                        f"(Report fetch failed: HTTP {resp.status})"
+                   )
 
-            raise Exception(f"Report fetch failed for {url}: HTTP {resp.status}")
-        report = await resp.json()
+                raise Exception(f"Report fetch failed for {url}: HTTP {resp.status}")
 
     if "data" not in report or "attributes" not in report["data"]:
         print(f"Malformed response for {url}: {report}")
@@ -786,7 +794,6 @@ async def virustotal_lookup(session, url, channel, guild: discord.Guild):
 async def virustotal_scan_file(session, file_bytes, filename, channel, guild: discord.Guild):
     headers = {"x-apikey": VT_API_KEY}
     
-    #uload the file to get an analysis id
     upload_url = "https://www.virustotal.com/api/v3/files"
     form_data = aiohttp.FormData()
     form_data.add_field('file', file_bytes, filename=filename)
@@ -805,12 +812,16 @@ async def virustotal_scan_file(session, file_bytes, filename, channel, guild: di
         upload_data = await resp.json()
         analysis_id = upload_data["data"]["id"]
 
-    #poll the analysis endpoint until it's complete
     analysis_url = f"https://www.virustotal.com/api/v3/analyses/{analysis_id}"
+    attempt = 0
     while True:
-        await asyncio.sleep(SCAN_SLEEP) # Wait before checking the report
+        await asyncio.sleep(SCAN_SLEEP)
         async with session.get(analysis_url, headers=headers) as resp:
-            if resp.status != 200:
+            if resp.status == 404 & attempt == 0:
+                log_info(f"Analysis report not ready for {filename} (404). Retrying...")
+                attempt += 1
+                continue
+            elif resp.status != 200:
                 log_error(f"File report fetch failed for {filename}: HTTP {resp.status}")
                 raise Exception(f"File report fetch failed for {filename}: HTTP {resp.status}")
             
