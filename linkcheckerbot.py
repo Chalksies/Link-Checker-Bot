@@ -2350,10 +2350,10 @@ async def help_command(interaction: discord.Interaction):
     if is_admin:
         embed_page_1.add_field(
             name="General Usage",
-            value="• `/manual check_link <url>` - Manually scan a URL.\n"
-                  "• `/manual check_file <file>` - Manually scan an attachment.\n"
-                  "• `/violations show <user>` - Show violations for a user.\n"
-                  "• `/violations remove <id>` - Remove a violation.\n"
+            value="• `/manual check_link [url]` - Manually scan a URL.\n"
+                  "• `/manual check_file [file]` - Manually scan an attachment.\n"
+                  "• `/violations show [user]` - Show violations for a user.\n"
+                  "• `/violations remove [id]` - Remove a violation.\n"
                   "• `/stats show` - Show bot stats.\n"
                   "• `/stats reset` - Reset bot stats.",
             inline=False
@@ -2367,7 +2367,7 @@ async def help_command(interaction: discord.Interaction):
         )
         embed_page_2.add_field(
             name="Channel Moderation",
-            value="• `/moderate lockdown <duration> <reason>` - Lock a channel.\n"
+            value="• `/moderate lockdown [duration] [reason]` - Lock a channel.\n"
                   "• `/moderate unlock` - Unlock a channel manually.\n"
                   "• `/moderate purge [amount] [timeframe] [user] [channel]` - Purge messages.\n"
                   "• `/moderate purge_older [amount] [timeframe] [user] [channel]` - Purge old messages.\n"
@@ -2383,7 +2383,7 @@ async def help_command(interaction: discord.Interaction):
         embed_page_2.add_field(
             name="Global Bot Config",
             value="• `/config show` - Show global config.\n"
-                  "• `/config edit <key> <value>` - Edit global config.\n"
+                  "• `/config edit [key] [value]` - Edit global config.\n"
                   "• `/config reload` - Reload global config from file.\n"
                   "• `/config toggle_debug` - Toggle debug mode.",
             inline=False
@@ -2401,24 +2401,24 @@ async def help_command(interaction: discord.Interaction):
         )
         embed_page_3.add_field(
             name="Allowlist",
-            value="• `/allowlist add <domain>`\n"
-                  "• `/allowlist remove <domain>`\n"
+            value="• `/allowlist add [domain]`\n"
+                  "• `/allowlist remove [domain]`\n"
                   "• `/allowlist show`\n"
                   "• `/allowlist reload`",
             inline=False
         )
         embed_page_3.add_field(
             name="Denylist",
-            value="• `/denylist add <domain>`\n"
-                  "• `/denylist remove <domain>`\n"
+            value="• `/denylist add [domain]`\n"
+                  "• `/denylist remove [domain]`\n"
                   "• `/denylist show`\n"
                   "• `/denylist reload`",
             inline=False
         )
         embed_page_3.add_field(
             name="Shorteners",
-            value="• `/shortenerlist add <domain>`\n"
-                  "• `/shortenerlist remove <domain>`\n"
+            value="• `/shortenerlist add [domain]`\n"
+                  "• `/shortenerlist remove [domain]`\n"
                   "• `/shortenerlist show`\n"
                   "• `/shortenerlist reload`",
             inline=False
@@ -2431,7 +2431,7 @@ async def help_command(interaction: discord.Interaction):
         )
         embed_page_4.add_field(
             name="Fuckup Logging",
-            value="• `/fuckup log <reason>`\n"
+            value="• `/fuckup log [reason]`\n"
                   "• `/fuckup last`\n"
                   "• `/fuckup all`",
             inline=False
@@ -2660,7 +2660,7 @@ async def purge(interaction: discord.Interaction, amount: int = 100, timeframe: 
 @moderation_group.command(name="purge_older", description="Purge messages older than 14 days. Experimental feature!")
 @app_commands.describe(
     amount="Amount of messages to purge (defaults to 100)",
-    timeframe="How far back to purge (defaults to 30d. minimum 14d. longer timeframes may cause timeouts and failures!)",
+    timeframe="How far back to purge (defaults to 30d. minimum 14d. Longer timeframes may cause issues.)",
     user="What user to target (defaults to all)",
     channel="What channel to target (defaults to all)"
 )
