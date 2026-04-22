@@ -2966,38 +2966,11 @@ To stop receiving messages from this bot, reply “STOP” to this message.
                 """)
                 return
             
-    if message.webhook_id:
-        urls = extract_message_urls(message)
-
-        for url in urls:
-            await scan_queue.put((message, url))
-
-        all_allowlisted = all(extract_domain(url) in ALLOWLIST for url in urls) if urls else False
-        if message.embeds and not all_allowlisted:
-            embed_urls = extract_embed_urls(message)
-            for url in embed_urls:
-                await scan_queue.put((message, url))
-
-        if message.attachments:
-            for attachment in message.attachments:
-                if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
-                    if attachment.size > MAX_FILE_SIZE:
-                        log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
-                        continue
-                    
-                    increment_stat("attachments_scanned")
-                    await attachment_vt_queue.put((message, attachment))
-                else:
-                    log_info(f"Skipping attachment check for {attachment.filename} from {message.author}({message.author.id}) because of the extension.")
-        return
-    
-    if message.author.bot or message.author.guild_permissions.manage_messages:
-        urls = extract_message_urls(message)
+    if (message.author.bot or message.author.guild_permissions.manage_messages) and not message.webhook_id:
         increment_stat("messages_skipped")
         if urls:
             log_info(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
             print(f"Skipping link check for {message.author} ({message.author.id}) in #{message.channel} due to mod permissions (and not a webhook).")
-        
         if message.attachments:
             log_info(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
             print(f"Skipping attachment check for {message.author} due to mod permissions (and not a webhook).")
@@ -3006,31 +2979,38 @@ To stop receiving messages from this bot, reply “STOP” to this message.
         return
     
     urls = extract_message_urls(message)
-    for url in urls:
-        await scan_queue.put((message, url))
 
     all_allowlisted = all(extract_domain(url) in ALLOWLIST for url in urls) if urls else False
-    if message.embeds and not all_allowlisted:
-        embed_urls = extract_embed_urls(message)
-        for url in embed_urls:
+    if not all_allowlisted:
+        for url in urls:
             await scan_queue.put((message, url))
+        if message.embeds:
+            embed_urls = extract_embed_urls(message)
+            for url in embed_urls:
+                await scan_queue.put((message, url))
 
     if message.attachments:
-            for attachment in message.attachments:
-                if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
-                    if attachment.size > MAX_FILE_SIZE:
-                        log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
-                        print(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
-                        continue
+        for attachment in message.attachments:
+            if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
+                if attachment.size > MAX_FILE_SIZE:
+                    log_info(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
+                    print(f"Skipping attachment {attachment.filename} due to size ({attachment.size / 1024 / 1024:.2f}MB).")
+                    continue
                     
-                    increment_stat("attachments_scanned")
-                    await attachment_vt_queue.put((message, attachment))
-                else:
-                    log_info(f"Skipping attachment check for {attachment.filename} from {message.author}({message.author.id}) because of the extension.")
+                increment_stat("attachments_scanned")
+                await attachment_vt_queue.put((message, attachment))
+            else:
+                log_info(f"Skipping attachment check for {attachment.filename} from {message.author}({message.author.id}) because of the extension.")
     
 @client.event
 async def on_message_edit(before, after):
     if after.author == client.user:
+        return
+    
+    if (after.author.bot or after.author.guild_permissions.manage_messages) and not after.webhook_id:
+        if new_urls or new_embed_urls:
+            log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
+            print(f"Skipping link edit check for {after.author} due to mod permissions.")
         return
 
     before_urls = extract_message_urls(before)
@@ -3043,28 +3023,14 @@ async def on_message_edit(before, after):
 
     before_attachments = {a.id for a in before.attachments}
     new_attachments = [a for a in after.attachments if a.id not in before_attachments]
-
-    if after.author.bot or after.author.guild_permissions.manage_messages:
-        if new_urls or new_embed_urls:
-            log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
-            print(f"Skipping link edit check for {after.author} due to mod permissions.")
-        
-        for attachment in new_attachments:
-            if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
-                if attachment.size > MAX_FILE_SIZE:
-                    log_info(f"Skipping attachment {attachment.filename} due to size.")
-                    continue
-                increment_stat("attachments_scanned")
-                await attachment_vt_queue.put((after, attachment))
-        return
-
-    for url in new_urls:
-        await scan_queue.put((after, url))
-
+    
     all_allowlisted = all(extract_domain(url) in ALLOWLIST for url in new_urls) if new_urls else False
-    for url in new_embed_urls:
-        if not all_allowlisted:
+    if not all_allowlisted:
+        for url in new_urls:
             await scan_queue.put((after, url))
+        if after.embeds:
+            for url in new_embed_urls:
+                await scan_queue.put((after, url))
 
     for attachment in new_attachments:
         if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
@@ -3076,22 +3042,6 @@ async def on_message_edit(before, after):
             await attachment_vt_queue.put((after, attachment))
         else:
             log_info(f"Skipping attachment check for {attachment.filename} because of the extension.")
-
-    if after.webhook_id:
-        for url in new_urls:
-            await scan_queue.put((after, url))
-
-        for url in new_embed_urls:
-            await scan_queue.put((after, url))
-
-        for attachment in new_attachments:
-            if attachment.filename.lower().endswith(SCANNABLE_EXTENSIONS):
-                if attachment.size > MAX_FILE_SIZE:
-                    log_info(f"Skipping attachment {attachment.filename} due to size.")
-                    continue
-                increment_stat("attachments_scanned")
-                await attachment_vt_queue.put((after, attachment))
-        return
 
 @client.event
 async def on_raw_reaction_add(payload):
