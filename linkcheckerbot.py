@@ -117,9 +117,9 @@ FUCKUPS_PATH = config["structure"]["fuckup_path"]
 REACTS_PATH = config["structure"]["react_stats"]
 TRACKED_USERS_PATH = config["structure"].get("tracked_users_path", "tracked_users.json")
 
-VERIFIED_ROLE_NAME = config["moderation"]["verified_role_name"]
-MEMBER_ROLE_NAME = config["moderation"]["member_role_name"]
 MODERATOR_ROLE_ID = config["moderation"]["moderator_role_id"]
+VERIFIED_ROLE_ID = config["moderation"].get("verified_role_id")
+MEMBER_ROLE_ID = config["moderation"].get("member_role_id")
 
 def save_config():
     with open(CONFIG_PATH, "wb") as f:
@@ -743,9 +743,9 @@ def log_violation(user: discord.User, url: str):
 
 async def _unlock_channel_logic(guild: discord.Guild, channel: discord.TextChannel, prev_everyone, prev_member, prev_verified, prev_moderator, reason: str):
     everyone = guild.default_role
-    member_role = discord.utils.get(guild.roles, name=MEMBER_ROLE_NAME)
-    verified_role = discord.utils.get(guild.roles, name=VERIFIED_ROLE_NAME)
-    moderator_role = guild.get_role(MODERATOR_ROLE_ID)
+    member_role = guild.get_role(MEMBER_ROLE_ID) if MEMBER_ROLE_ID else None
+    verified_role = guild.get_role(VERIFIED_ROLE_ID) if VERIFIED_ROLE_ID else None
+    moderator_role = guild.get_role(MODERATOR_ROLE_ID) if MODERATOR_ROLE_ID else None
 
     try:
         if prev_everyone is None:
@@ -1551,6 +1551,8 @@ async def config_show(interaction: discord.Interaction):
     embed.add_field(name="LOG_CHANNEL_ID", value=f"`{LOG_CHANNEL_ID}`", inline=False)
     embed.add_field(name="RESPONSIBLE_MODERATOR_ID", value=f"`{RESPONSIBLE_MODERATOR_ID}`", inline=False)
     embed.add_field(name="MODERATOR_ROLE_ID", value=f"`{MODERATOR_ROLE_ID}`", inline=False)
+    embed.add_field(name="VERIFIED_ROLE_ID", value=f"`{VERIFIED_ROLE_ID}`", inline=False)
+    embed.add_field(name="MEMBER_ROLE_ID", value=f"`{MEMBER_ROLE_ID}`", inline=False)
 
     await interaction.response.send_message(embed=embed)
 
@@ -1593,6 +1595,8 @@ async def config_reload(interaction: discord.Interaction):
     global TRACKED_NOTIFICATION_COOLDOWN_SECONDS
     global TRACKED_USERS
     global MODERATOR_ROLE_ID
+    global VERIFIED_ROLE_ID
+    global MEMBER_ROLE_ID
 
     config = load_config()
 
@@ -1624,11 +1628,13 @@ async def config_reload(interaction: discord.Interaction):
     TRACKED_USERS_PATH = config["structure"].get("tracked_users_path", TRACKED_USERS_PATH)
     TRACKED_USERS = load_tracked_users()
     MODERATOR_ROLE_ID = config["moderation"].get("moderator_role_id", MODERATOR_ROLE_ID)
+    VERIFIED_ROLE_ID = config["moderation"].get("verified_role_id", VERIFIED_ROLE_ID)
+    MEMBER_ROLE_ID = config["moderation"].get("member_role_id", MEMBER_ROLE_ID)
 
     await client.change_presence(activity=discord.CustomActivity(name=PRESENCE_TEXT))
     await interaction.response.send_message("Configuration reloaded from file.")
 
-CONFIG_KEYS = ["SCAN_SLEEP", "SCAN_INTERVAL", "MAX_MALICIOUS_MESSAGES", "VIOLATION_WINDOW", "LOG_CHANNEL_ID", "RESPONSIBLE_MODERATOR_ID", "DELETION_THRESHOLD", "MODERATOR_ROLE_ID"]
+CONFIG_KEYS = ["SCAN_SLEEP", "SCAN_INTERVAL", "MAX_MALICIOUS_MESSAGES", "VIOLATION_WINDOW", "LOG_CHANNEL_ID", "RESPONSIBLE_MODERATOR_ID", "DELETION_THRESHOLD", "MODERATOR_ROLE_ID", "VERIFIED_ROLE_ID", "MEMBER_ROLE_ID"]
 
 async def config_key_autocomplete(interaction: discord.Interaction, current: str):
     return [
@@ -1684,10 +1690,18 @@ async def config_edit(interaction: discord.Interaction, key: str, value: str):
         global MODERATOR_ROLE_ID
         MODERATOR_ROLE_ID = int(value)
         config["moderation"]["moderator_role_id"] = MODERATOR_ROLE_ID
+    elif key == "verified_role_id":
+        global VERIFIED_ROLE_ID
+        VERIFIED_ROLE_ID = int(value)
+        config["moderation"]["verified_role_id"] = VERIFIED_ROLE_ID
+    elif key == "member_role_id":
+        global MEMBER_ROLE_ID
+        MEMBER_ROLE_ID = int(value)
+        config["moderation"]["member_role_id"] = MEMBER_ROLE_ID
     else:
         await interaction.response.send_message(
             f"Unknown config key: `{key}`\n"
-            f"Available keys are: scan_sleep, scan_interval, max_malicious_messages, violation_window_minutes, log_channel_id, responsible_moderator_id", 
+            f"Available keys are: scan_sleep, scan_interval, max_malicious_messages, violation_window_minutes, log_channel_id, responsible_moderator_id, deletion_threshold, moderator_role_id, verified_role_id, member_role_id", 
             ephemeral=True)
         return
     
@@ -2503,9 +2517,9 @@ async def lockdown(interaction: discord.Interaction, duration: str, reason: str 
     channel = interaction.channel
     guild = interaction.guild
     everyone = interaction.guild.default_role
-    member_role = discord.utils.get(interaction.guild.roles, name=MEMBER_ROLE_NAME)
-    verified_role = discord.utils.get(interaction.guild.roles, name=VERIFIED_ROLE_NAME)
-    moderator_role = discord.utils.get(interaction.guild.get_role(MODERATOR_ROLE_ID))
+    member_role = guild.get_role(MEMBER_ROLE_ID)
+    verified_role = guild.get_role(VERIFIED_ROLE_ID)
+    moderator_role = guild.get_role(MODERATOR_ROLE_ID)
 
     # ensure per-guild map exists
     guild_locks = lockdowns.setdefault(interaction.guild.id, {})
@@ -2606,9 +2620,9 @@ async def unlock(interaction: discord.Interaction):
         data["task"].cancel()
 
     everyone = interaction.guild.default_role
-    member_role = discord.utils.get(interaction.guild.roles, name=MEMBER_ROLE_NAME)
-    verified_role = discord.utils.get(interaction.guild.roles, name=VERIFIED_ROLE_NAME)
-    moderator_role = discord.utils.get(interaction.guild.get_role(MODERATOR_ROLE_ID))
+    member_role = interaction.guild.get_role(MEMBER_ROLE_ID)
+    verified_role = interaction.guild.get_role(VERIFIED_ROLE_ID)
+    moderator_role = interaction.guild.get_role(MODERATOR_ROLE_ID)
 
 
     prev_everyone = data.get("previous_overwrite_everyone")
