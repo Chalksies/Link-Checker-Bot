@@ -3061,12 +3061,6 @@ async def on_message_edit(before, after):
     if after.author == client.user:
         return
     
-    if (after.author.bot or after.author.guild_permissions.manage_messages) and not after.webhook_id:
-        if new_urls or new_embed_urls:
-            log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
-            print(f"Skipping link edit check for {after.author} due to mod permissions.")
-        return
-
     before_urls = extract_message_urls(before)
     after_urls = extract_message_urls(after)
     new_urls = after_urls - before_urls
@@ -3074,6 +3068,12 @@ async def on_message_edit(before, after):
     before_embed_urls = extract_embed_urls(before)
     after_embed_urls = extract_embed_urls(after)
     new_embed_urls = after_embed_urls - before_embed_urls
+
+    if (after.author.bot or after.author.guild_permissions.manage_messages) and not after.webhook_id:
+        if new_urls or new_embed_urls:
+            log_info(f"Skipping link edit check for {after.author} due to mod permissions.")
+            print(f"Skipping link edit check for {after.author} due to mod permissions.")
+        return
 
     before_attachments = {a.id for a in before.attachments}
     new_attachments = [a for a in after.attachments if a.id not in before_attachments]
