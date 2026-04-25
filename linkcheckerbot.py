@@ -630,12 +630,35 @@ def extract_domain(url: str) -> str:
 
 def extract_message_urls(message) -> set:
     urls = set(re.findall(URL_REGEX, message.content or ""))
-    urls = [link.rstrip("().,;?!") for link in urls]
+    urls = [strip_trailing_parens(link) for link in urls]
     normalized_urls = set()
     for url in urls:
         increment_stat("urls_scanned")
         normalized_urls.add(normalize_url(url))
     return normalized_urls
+
+
+def strip_trailing_parens(url: str) -> str:
+    url = url.rstrip("(),;?!")
+    
+    open_count = url.count("(")
+    close_count = url.count(")")
+    
+    while close_count > open_count:
+        last_close = url.rfind(")")
+        if last_close == -1:
+            break
+        before = url[:last_close]
+        open_before = before.count("(")
+        close_before = before.count(")")
+        
+        if close_before >= open_before:
+            url = url[:last_close].rstrip(".,;?!")
+            close_count -= 1
+        else:
+            break
+    
+    return url
 
 def extract_embed_urls(message) -> set:
     urls = set()
@@ -658,9 +681,9 @@ def extract_embed_urls(message) -> set:
 
         for u in candidates:
             try:
-                normalized = normalize_url(u)
+                normalized = normalize_url(strip_trailing_parens(u))
             except Exception:
-                normalized = u.strip().lower()
+                normalized = strip_trailing_parens(u).strip().lower()
 
             if normalized:
                 increment_stat("urls_scanned")
