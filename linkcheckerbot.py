@@ -3020,6 +3020,8 @@ To stop receiving messages from this bot, reply “STOP” to this message.
                 """)
                 return
             
+    urls = extract_message_urls(message)
+            
     if (message.author.bot or message.author.guild_permissions.manage_messages) and not message.webhook_id:
         increment_stat("messages_skipped")
         if urls:
@@ -3031,8 +3033,6 @@ To stop receiving messages from this bot, reply “STOP” to this message.
         else:
             return
         return
-    
-    urls = extract_message_urls(message)
 
     all_allowlisted = all(extract_domain(url) in ALLOWLIST for url in urls) if urls else False
     if not all_allowlisted:
