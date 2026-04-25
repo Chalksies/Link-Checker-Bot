@@ -3078,7 +3078,7 @@ async def on_message_edit(before, after):
     before_attachments = {a.id for a in before.attachments}
     new_attachments = [a for a in after.attachments if a.id not in before_attachments]
     
-    all_allowlisted = all(extract_domain(url) in ALLOWLIST for url in new_urls) if new_urls else False
+    all_allowlisted = all(extract_domain(url) in ALLOWLIST for url in after_urls) if after_urls else False
     if not all_allowlisted:
         for url in new_urls:
             await scan_queue.put((after, url))
