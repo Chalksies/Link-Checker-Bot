@@ -2741,7 +2741,7 @@ async def purge(interaction: discord.Interaction, amount: int = 100, timeframe: 
     log_channel = get_log_channel(interaction.guild)
     if log_channel:
         channels_str = ', '.join([ch.mention for ch in affected_channels]) if affected_channels else "None"
-        await interaction.response.send_message(f"Purged {total_deleted} messages in channels: {channels_str}\n"
+        await interaction.followup.send(ephemeral=False, content=f"Purged {total_deleted} messages in channels: {channels_str}\n"
                                f"Command ran by {interaction.user.mention} ({interaction.user.id}).\n"
                                f"**Filters** - Amount: {amount}, Timeframe: {timeframe}, User: {user.mention if user else 'All'}, Target Channel: {channel.mention if channel else 'All'}\n"
                                f"**Deleted message amount** - {total_deleted}")
@@ -2851,16 +2851,16 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
             if time_limit_reached:
                 break
 
-    #if time_limit_reached:
-    #    await interaction.followup.send(f"Purged {total_deleted} messages before hitting the time limit. There may be more messages to delete, you can run the command again to continue purging... still avoid large timeframes.")
-    #
-    #else:
-    #    await interaction.followup.send(f"Purged {total_deleted} messages!")
+    if time_limit_reached:
+        await interaction.followup.send(f"Purged {total_deleted} messages before hitting the time limit. There may be more messages to delete, you can run the command again to continue purging... still avoid large timeframes.")
+    
+    else:
+        await interaction.followup.send(f"Purged {total_deleted} messages!")
 
     log_channel = get_log_channel(interaction.guild)
     if log_channel:
         channels_str = ', '.join([ch.mention for ch in affected_channels]) if affected_channels else "None"
-        await interaction.response.send_message(f"Purged {total_deleted} messages in channels: {channels_str}\n"
+        await interaction.followup.send(ephemeral=False, content=f"Purged {total_deleted} messages in channels: {channels_str}\n"
                                f"Command ran by {interaction.user.mention} ({interaction.user.id}).\n"
                                f"**Filters** - Amount: {amount}, Timeframe: {timeframe}, User: {user.mention if user else 'All'}, Target Channel: {channel.mention if channel else 'All'}\n"
                                f"**Deleted message amount** - {total_deleted}\n"
