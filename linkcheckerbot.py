@@ -2705,7 +2705,7 @@ async def purge(interaction: discord.Interaction, amount: int = 100, timeframe: 
         return
 
     def is_target(message: discord.Message):
-        if message.created_at < cutoff_date:
+        if message.created_at <= cutoff_date:
             return False
         if user and message.author.id != user.id:
             return False
@@ -2727,7 +2727,6 @@ async def purge(interaction: discord.Interaction, amount: int = 100, timeframe: 
         deleted = await ch.purge(
             limit=remaining_quota,
             check=is_target,
-            after=cutoff_date,
             bulk=True,
             reason=f"Bulk deletion (purge) by {interaction.user}.",
         )
@@ -2806,7 +2805,6 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
         deleted = await ch.purge(
             limit=remaining_quota,
             check=is_purge_target,
-            after=fourteen_days_ago,
             bulk=True,
             reason=f"Bulk deletion (purge_older) by {interaction.user}.",
         )
