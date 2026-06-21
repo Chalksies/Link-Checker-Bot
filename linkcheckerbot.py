@@ -2692,8 +2692,8 @@ async def purge(interaction: discord.Interaction, amount: int = 100, timeframe: 
 
     await interaction.response.defer(thinking=True, ephemeral=True)
 
-    cutoff_date = discord.utils.utcnow() - datetime.timedelta(seconds=parse_duration(timeframe))
-    fourteen_days_ago = discord.utils.utcnow() - datetime.timedelta(days=14)
+    cutoff_date = discord.utils.utcnow() - timedelta(seconds=parse_duration(timeframe))
+    fourteen_days_ago = discord.utils.utcnow() - timedelta(days=14)
 
     if cutoff_date < fourteen_days_ago:
         await interaction.followup.send("Timeframe exceeds 14 days. Use the `purge_older` command for messages older than 14 days!")
@@ -2754,8 +2754,8 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
     MAX_RUNTIME = 13*60
     time_limit_reached = False
 
-    cutoff_date = discord.utils.utcnow() - datetime.timedelta(seconds=parse_duration(timeframe))
-    fourteen_days_ago = discord.utils.utcnow() - datetime.timedelta(days=14)
+    cutoff_date = discord.utils.utcnow() - timedelta(seconds=parse_duration(timeframe))
+    fourteen_days_ago = discord.utils.utcnow() - timedelta(days=14)
 
     if cutoff_date < fourteen_days_ago:
         await interaction.followup.send("Timeframe must be at least 14 days. For deleting messages exclusively newer than 14 days, use the regular purge command.", ephemeral=True)
