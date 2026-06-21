@@ -20,6 +20,7 @@ import uuid
 import tldextract
 import shutil
 import sys
+import random
 
 cwd = Path.cwd()
 script_dir = Path(__file__).parent.resolve()
@@ -2713,27 +2714,37 @@ async def purge(interaction: discord.Interaction, amount: int = 100, timeframe: 
         return True
     
     total_deleted = 0
+    affected_channels = []
+    remaining_quota = amount
     
-    for channel in interaction.guild.text_channels:
-        if not channel.permissions_for(interaction.guild.me).manage_messages:
+    for ch in interaction.guild.text_channels:
+        if not ch.permissions_for(interaction.guild.me).manage_messages:
             continue
         
-        deleted = await channel.purge(
-            limit=amount,
+        if remaining_quota <= 0:
+            break
+        
+        deleted = await ch.purge(
+            limit=remaining_quota,
             check=is_target,
             after=cutoff_date,
             bulk=True,
             reason=f"Bulk deletion (purge) by {interaction.user}.",
-        )                
-        total_deleted = total_deleted + len(deleted)
+        )
+        
+        if deleted:
+            affected_channels.append(ch)
+            total_deleted += len(deleted)
+            remaining_quota -= len(deleted)
 
     await interaction.followup.send(f"Purged {total_deleted} messages!")
 
     log_channel = get_log_channel(interaction.guild)
     if log_channel:
-        await log_channel.send(f"Purged {total_deleted} messages in {channel.mention}.\n"
+        channels_str = ', '.join([ch.mention for ch in affected_channels]) if affected_channels else "None"
+        await log_channel.send(f"Purged {total_deleted} messages in channels: {channels_str}\n"
                                f"Command ran by {interaction.user.mention} ({interaction.user.id}).\n"
-                               f"**Filters** - Amount: {amount}, Timeframe: {timeframe}, User: {user.mention if user else 'All'}, Channel: {channel.mention if channel else 'All'}\n"
+                               f"**Filters** - Amount: {amount}, Timeframe: {timeframe}, User: {user.mention if user else 'All'}, Target Channel: {channel.mention if channel else 'All'}\n"
                                f"**Deleted message amount** - {total_deleted}")
 
 @moderation_group.command(name="purge_older", description="Purge messages older than 14 days. Experimental feature!")
@@ -2782,37 +2793,65 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
         return True
     
     total_deleted = 0
+    affected_channels = []
+    remaining_quota = amount
 
-    for channel in interaction.guild.text_channels:
-        if not channel.permissions_for(interaction.guild.me).manage_messages:
+    for ch in interaction.guild.text_channels:
+        if not ch.permissions_for(interaction.guild.me).manage_messages:
             continue
 
-        deleted = await channel.purge(
-            limit=amount,
+        if remaining_quota <= 0:
+            break
+
+        deleted = await ch.purge(
+            limit=remaining_quota,
             check=is_purge_target,
             after=fourteen_days_ago,
             bulk=True,
             reason=f"Bulk deletion (purge_older) by {interaction.user}.",
         )
-        total_deleted = total_deleted + len(deleted)
+        
+        if deleted:
+            affected_channels.append(ch)
+            total_deleted += len(deleted)
+            remaining_quota -= len(deleted)
 
-    async for message in channel.history(limit=None, before=fourteen_days_ago, after=cutoff_date):
-        if is_manual_target(message):
-
-            if time.time() - start_time > MAX_RUNTIME:
-                time_limit_reached = True
-                break
-
-            try:
-                await message.delete(reason=f"Bulk deletion (purge_older) by {interaction.user}.")
-                total_deleted += 1
-            except discord.HTTPException as e:
-                log_error(f"Failed to delete message {message.id} in purge_older: {e}")
-                if e.status == 429:
-                    await asyncio.sleep(5)
+    #manual deletion
+    if remaining_quota > 0:
+        for ch in interaction.guild.text_channels:
+            if not ch.permissions_for(interaction.guild.me).manage_messages:
                 continue
 
-            await asyncio.sleep(1)
+            if remaining_quota <= 0:
+                break
+
+            async for message in ch.history(limit=None, before=fourteen_days_ago, after=cutoff_date):
+                if is_manual_target(message):
+
+                    if time.time() - start_time > MAX_RUNTIME:
+                        time_limit_reached = True
+                        break
+
+                    if remaining_quota <= 0:
+                        time_limit_reached = True
+                        break
+
+                    try:
+                        await message.delete(reason=f"Bulk deletion (purge_older) by {interaction.user}.")
+                        if ch not in affected_channels:
+                            affected_channels.append(ch)
+                        total_deleted += 1
+                        remaining_quota -= 1
+                    except discord.HTTPException as e:
+                        log_error(f"Failed to delete message {message.id} in purge_older: {e}")
+                        if e.status == 429:
+                            await asyncio.sleep(random.uniform(5,10))
+                        continue
+
+                    await asyncio.sleep(random.uniform(1, 1.3))
+
+            if time_limit_reached:
+                break
 
     if time_limit_reached:
         await interaction.followup.send(f"Purged {total_deleted} messages before hitting the time limit. There may be more messages to delete, you can run the command again to continue purging... still avoid large timeframes.")
@@ -2822,9 +2861,10 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
 
     log_channel = get_log_channel(interaction.guild)
     if log_channel:
-        await log_channel.send(f"Purged {total_deleted} messages in {channel.mention}.\n"
+        channels_str = ', '.join([ch.mention for ch in affected_channels]) if affected_channels else "None"
+        await log_channel.send(f"Purged {total_deleted} messages in channels: {channels_str}\n"
                                f"Command ran by {interaction.user.mention} ({interaction.user.id}).\n"
-                               f"**Filters** - Amount: {amount}, Timeframe: {timeframe}, User: {user.mention if user else 'All'}, Channel: {channel.mention if channel else 'All'}\n"
+                               f"**Filters** - Amount: {amount}, Timeframe: {timeframe}, User: {user.mention if user else 'All'}, Target Channel: {channel.mention if channel else 'All'}\n"
                                f"**Deleted message amount** - {total_deleted}\n"
                                f"**Removed all?** - {'Yes, deleted all specified messages.' if not time_limit_reached else 'No, time limit reached!'}")
 
