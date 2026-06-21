@@ -2712,6 +2712,8 @@ async def purge(interaction: discord.Interaction, amount: int = 100, timeframe: 
             return False
         return True
     
+    total_deleted = 0
+    
     for channel in interaction.guild.text_channels:
         if not channel.permissions_for(interaction.guild.me).manage_messages:
             continue
@@ -2723,7 +2725,7 @@ async def purge(interaction: discord.Interaction, amount: int = 100, timeframe: 
             bulk=True,
             reason=f"Bulk deletion (purge) by {interaction.user}.",
         )                
-        total_deleted = len(deleted)
+        total_deleted = total_deleted + len(deleted)
 
     await interaction.followup.send(f"Purged {total_deleted} messages!")
 
@@ -2755,12 +2757,12 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
     cutoff_date = discord.utils.utcnow() - datetime.timedelta(seconds=parse_duration(timeframe))
     fourteen_days_ago = discord.utils.utcnow() - datetime.timedelta(days=14)
 
-    if cutoff_date > fourteen_days_ago:
+    if cutoff_date < fourteen_days_ago:
         await interaction.followup.send("Timeframe must be at least 14 days. For deleting messages exclusively newer than 14 days, use the regular purge command.", ephemeral=True)
         return
 
     def is_manual_target(message: discord.Message):
-        if message.created_at > fourteen_days_ago:
+        if message.created_at < fourteen_days_ago:
             return False
         if user and message.author.id != user.id:
             return False
@@ -2771,13 +2773,15 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
         return True
 
     def is_purge_target(message: discord.Message):
-        if message.created_at < fourteen_days_ago:
+        if message.created_at > fourteen_days_ago:
             return False
         if user and message.author.id != user.id:
             return False
         if channel and message.channel.id != channel.id:
             return False
         return True
+    
+    total_deleted = 0
 
     for channel in interaction.guild.text_channels:
         if not channel.permissions_for(interaction.guild.me).manage_messages:
@@ -2790,7 +2794,7 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
             bulk=True,
             reason=f"Bulk deletion (purge_older) by {interaction.user}.",
         )
-        total_deleted = len(deleted)
+        total_deleted = total_deleted + len(deleted)
 
     async for message in channel.history(limit=None, before=fourteen_days_ago, after=cutoff_date):
         if is_manual_target(message):
