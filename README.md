@@ -9,7 +9,7 @@
 - Various helpful commands
 - Manual usage of the API
 - Channel lockdown
-- Purge commands (available for messages older than 14)
+- **(WIP)** Purge commands (also available for messages older than 14)
 ## Requirements:
 - Available device
 - A Discord Application
