@@ -2679,19 +2679,22 @@ async def unlock(interaction: discord.Interaction):
 
     await interaction.response.send_message("Channel manually unlocked.")
 
-@moderation_group.command(name="purge", description="Purge messages. Provide at least one filter.")
+@moderation_group.command(name="purge", description="Purge messages. Provide at least one filter AND/or a specific channel.")
 @app_commands.describe(
-    amount="Amount of messages to purge (deafults to 100, max 1000)",
-    timeframe="How far back to purge (defaults to 1d, max 14d! use purge_older for older messages)",
+    amount="Amount of messages to purge (deafults to 50, max 1000)",
+    timeframe="How far back to purge (defaults to 30m, max 14d! use purge_older for older messages)",
     user="What user to target (defaults to all)",
     channel="What channel to target (defaults to all)"
 )
 @app_commands.default_permissions(manage_messages=True)
-async def purge(interaction: discord.Interaction, amount: int = 100, timeframe: str = "1d", user: discord.User = None, channel: discord.TextChannel = None):
+async def purge(interaction: discord.Interaction, amount: int = 50, timeframe: str = "30m", user: discord.User = None, channel: discord.TextChannel = None):
     if interaction.guild is None:
         await interaction.response.send_message("I don't currently support DMs!")
 
-    await interaction.response.defer(thinking=True, ephemeral=True)
+    await interaction.response.defer(thinking=True)
+
+    if channel is None:
+        await interaction.followup.send("You must specify a channel. Cross-channel purging is not implemented yet!")
 
     cutoff_date = discord.utils.utcnow() - timedelta(seconds=parse_duration(timeframe))
     fourteen_days_ago = discord.utils.utcnow() - timedelta(days=14)
@@ -2741,7 +2744,7 @@ async def purge(interaction: discord.Interaction, amount: int = 100, timeframe: 
     log_channel = get_log_channel(interaction.guild)
     if log_channel:
         channels_str = ', '.join([ch.mention for ch in affected_channels]) if affected_channels else "None"
-        await interaction.followup.send(ephemeral=False, content=f"Purged {total_deleted} messages in channels: {channels_str}\n"
+        await interaction.followup.send(f"Purged {total_deleted} messages in channels: {channels_str}\n"
                                f"Command ran by {interaction.user.mention} ({interaction.user.id}).\n"
                                f"**Filters** - Amount: {amount}, Timeframe: {timeframe}, User: {user.mention if user else 'All'}, Target Channel: {channel.mention if channel else 'All'}\n"
                                f"**Deleted message amount** - {total_deleted}")
@@ -2768,7 +2771,7 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
     fourteen_days_ago = discord.utils.utcnow() - timedelta(days=14)
 
     if cutoff_date < fourteen_days_ago:
-        await interaction.followup.send("Timeframe must be at least 14 days. For deleting messages exclusively newer than 14 days, use the regular purge command.", ephemeral=True)
+        await interaction.followup.send("Timeframe must be at least 14 days. For deleting messages exclusively newer than 14 days, use the regular purge command.")
         return
 
     def is_manual_target(message: discord.Message):
@@ -2860,7 +2863,7 @@ async def purge_older(interaction: discord.Interaction, amount: int = 100, timef
     log_channel = get_log_channel(interaction.guild)
     if log_channel:
         channels_str = ', '.join([ch.mention for ch in affected_channels]) if affected_channels else "None"
-        await interaction.followup.send(ephemeral=False, content=f"Purged {total_deleted} messages in channels: {channels_str}\n"
+        await interaction.followup.send(f"Purged {total_deleted} messages in channels: {channels_str}\n"
                                f"Command ran by {interaction.user.mention} ({interaction.user.id}).\n"
                                f"**Filters** - Amount: {amount}, Timeframe: {timeframe}, User: {user.mention if user else 'All'}, Target Channel: {channel.mention if channel else 'All'}\n"
                                f"**Deleted message amount** - {total_deleted}\n"
