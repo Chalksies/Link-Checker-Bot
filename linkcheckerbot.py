@@ -2730,7 +2730,7 @@ async def purge(
     
     for ch in channels_to_scan:
         collected_in_ch = 0
-        async for msg in ch.history(limit=search_limit, after=cutoff_date):
+        async for msg in ch.history(limit=search_limit, after=cutoff_date, oldest_first=False):
             if user and msg.author.id != user.id:
                 continue
             
