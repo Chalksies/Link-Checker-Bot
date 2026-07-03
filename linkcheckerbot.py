@@ -2679,75 +2679,103 @@ async def unlock(interaction: discord.Interaction):
 
     await interaction.response.send_message("Channel manually unlocked.")
 
-@moderation_group.command(name="purge", description="Purge messages. Provide at least one filter AND/or a specific channel.")
+@moderation_group.command(name="purge", description="Purge messages. Specify at least one filter.")
 @app_commands.describe(
-    amount="Amount of messages to purge (deafults to 50, max 1000)",
-    timeframe="How far back to purge (defaults to 30m, max 14d! use purge_older for older messages)",
+    amount="Amount of messages to purge (defaults to 50, max 1000)",
+    timeframe="How far back to purge (defaults to 30m, max 14d!)",
     user="What user to target (defaults to all)",
-    channel="What channel to target (defaults to all)"
+    channel="What channel to target (defaults to the channel you run this in)",
+    cross_channel="Toggle to purge across ALL channels (overrides 'channel' option)"
 )
 @app_commands.default_permissions(manage_messages=True)
-async def purge(interaction: discord.Interaction, amount: int = 50, timeframe: str = "30m", user: discord.User = None, channel: discord.TextChannel = None):
+async def purge(
+    interaction: discord.Interaction, 
+    amount: int = 50, 
+    timeframe: str = "30m", 
+    user: discord.User = None, 
+    channel: discord.TextChannel = None,
+    cross_channel: bool = False
+):
     if interaction.guild is None:
-        await interaction.response.send_message("I don't currently support DMs!")
+        await interaction.response.send_message("I don't currently support DMs!", ephemeral=True)
+        return
 
     await interaction.response.defer(thinking=True)
-
-    if channel is None:
-        await interaction.followup.send("You must specify a channel. Cross-channel purging is not implemented yet!")
 
     cutoff_date = discord.utils.utcnow() - timedelta(seconds=parse_duration(timeframe))
     fourteen_days_ago = discord.utils.utcnow() - timedelta(days=14)
 
     if cutoff_date < fourteen_days_ago:
-        await interaction.followup.send("Timeframe exceeds 14 days. Use the `purge_older` command for messages older than 14 days!")
+        await interaction.followup.send("Timeframe exceeds 14 days. Use the `purge_older` command for older messages!")
         return
     
     if amount < 1 or amount > 1000:
         await interaction.followup.send("Amount must be between 1 and 1000.")
         return
 
-    def is_target(message: discord.Message):
-        if message.created_at <= cutoff_date:
-            return False
-        if user and message.author.id != user.id:
-            return False
-        if channel and message.channel.id != channel.id:
-            return False
-        return True
+    channels_to_scan = []
+    if cross_channel:
+        channels_to_scan = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.guild.me).manage_messages]
+    elif channel:
+        channels_to_scan = [channel]
+    else:
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.followup.send("This command must be run in a text channel, or a channel must be specified.")
+            return
+        channels_to_scan = [interaction.channel]
+    
+    search_limit = min(2000, amount * 5) if user else amount
+
+    message_records = []
+    
+    for ch in channels_to_scan:
+        collected_in_ch = 0
+        async for msg in ch.history(limit=search_limit, after=cutoff_date):
+            if user and msg.author.id != user.id:
+                continue
+            
+            message_records.append(msg)
+            collected_in_ch += 1
+            
+            if len(channels_to_scan) == 1 and collected_in_ch >= amount:
+                break
+    
+    if not message_records:
+        await interaction.followup.send("No messages found matching the criteria.")
+        return
+    
+    message_records.sort(key=lambda m: m.created_at, reverse=True)
+    messages_to_delete = message_records[:amount]
+    
+    messages_by_channel = defaultdict(list)
+    for msg in messages_to_delete:
+        messages_by_channel[msg.channel].append(msg)
     
     total_deleted = 0
-    affected_channels = []
-    remaining_quota = amount
-    
-    for ch in interaction.guild.text_channels:
-        if not ch.permissions_for(interaction.guild.me).manage_messages:
-            continue
-        
-        if remaining_quota <= 0:
-            break
-        
-        deleted = await ch.purge(
-            limit=remaining_quota,
-            check=is_target,
-            bulk=True,
-            reason=f"Bulk deletion (purge) by {interaction.user}.",
-        )
-        
-        if deleted:
-            affected_channels.append(ch)
-            total_deleted += len(deleted)
-            remaining_quota -= len(deleted)
+    affected_channels = set()
 
-    #await interaction.followup.send(f"Purged {total_deleted} messages!")
+    for ch, msgs in messages_by_channel.items():
+        for i in range(0, len(msgs), 100):
+            chunk = msgs[i:i+100]
+            try:
+                await ch.delete_messages(chunk, reason=f"Bulk deletion (purge) by {interaction.user}.")
+                total_deleted += len(chunk)
+                affected_channels.add(ch)
+            except discord.HTTPException:
+                pass
+
+    channels_str = ', '.join([ch.mention for ch in affected_channels]) if affected_channels else "None"
+    summary = (
+        f"Purged **{total_deleted}** messages in channels: {channels_str}\n"
+        f"Command ran by {interaction.user.mention} ({interaction.user.id}).\n"
+        f"**Filters** - Amount: {amount}, Timeframe: {timeframe}, User: {user.mention if user else 'All'}, Cross-Channel: {cross_channel}"
+    )
+    
+    await interaction.followup.send(summary)
 
     log_channel = get_log_channel(interaction.guild)
     if log_channel:
-        channels_str = ', '.join([ch.mention for ch in affected_channels]) if affected_channels else "None"
-        await interaction.followup.send(f"Purged {total_deleted} messages in channels: {channels_str}\n"
-                               f"Command ran by {interaction.user.mention} ({interaction.user.id}).\n"
-                               f"**Filters** - Amount: {amount}, Timeframe: {timeframe}, User: {user.mention if user else 'All'}, Target Channel: {channel.mention if channel else 'All'}\n"
-                               f"**Deleted message amount** - {total_deleted}")
+        await log_channel.send(summary)
 
 @moderation_group.command(name="purge_older", description="Purge messages older than 14 days. Experimental feature!")
 @app_commands.describe(
