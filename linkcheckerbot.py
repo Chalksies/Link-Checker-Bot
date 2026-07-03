@@ -2787,8 +2787,8 @@ async def purge(
 )
 @app_commands.default_permissions(manage_messages=True)
 async def purge_older(
-    user: discord.User,
     interaction: discord.Interaction, 
+    user: discord.User,
     amount: int = 100, 
     timeframe: str = "28d", 
     channel: discord.TextChannel = None,
