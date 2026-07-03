@@ -2773,9 +2773,9 @@ async def purge(
     
     await interaction.followup.send(summary)
 
-    #log_channel = get_log_channel(interaction.guild)
-    #if log_channel:
-    #    await log_channel.send(summary)
+    log_channel = get_log_channel(interaction.guild)
+    if log_channel:
+        await log_channel.send(summary)
 
 @moderation_group.command(name="purge_older", description="Purge messages older than 14 days. Experimental feature!")
 @app_commands.describe(
