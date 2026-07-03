@@ -2684,8 +2684,8 @@ async def unlock(interaction: discord.Interaction):
     amount="Amount of messages to purge (defaults to 50, max 1000)",
     timeframe="How far back to purge (defaults to 30m, max 14d!)",
     user="What user to target (defaults to all)",
-    channel="What channel to target (defaults to the channel you run this in)",
-    cross_channel="Toggle to purge across ALL channels (overrides 'channel' option)"
+    channel="What channel to target (defaults to current channel)",
+    cross_channel='(EXPERIMENTAL) Toggle to purge across ALL channels (defaults to false, overrides "channel")'
 )
 @app_commands.default_permissions(manage_messages=True)
 async def purge(
