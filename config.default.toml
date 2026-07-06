@@ -11,6 +11,7 @@ track_channel_id = CHANNEL ID FOR TRACKING
 threshold = 2
 verified_role_id = ROLE ID FOR VERIFIED USERS
 member_role_id = ROLE ID FOR REGULAR MEMBERS
+extra_role_id = ROLE ID FOR EXTRA ACCESS
 moderator_role_id = ROLE ID FOR MODS
 tracked_notification_cooldown_seconds = 3600
 

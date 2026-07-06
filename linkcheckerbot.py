@@ -121,6 +121,7 @@ TRACKED_USERS_PATH = config["structure"].get("tracked_users_path", "tracked_user
 MODERATOR_ROLE_ID = config["moderation"]["moderator_role_id"]
 VERIFIED_ROLE_ID = config["moderation"].get("verified_role_id")
 MEMBER_ROLE_ID = config["moderation"].get("member_role_id")
+EXTRA_ROLE_ID = config["moderation"].get("extra_role_id")
 
 def save_config():
     with open(CONFIG_PATH, "wb") as f:
@@ -235,6 +236,7 @@ def save_lockdowns_to_disk(lockdown_data: dict):
                 "prev_everyone": dict(data.get("previous_overwrite_everyone")) if data.get("previous_overwrite_everyone") else None,
                 "prev_member": dict(data.get("previous_overwrite_member")) if data.get("previous_overwrite_member") else None,
                 "prev_verified": dict(data.get("previous_overwrite_verified")) if data.get("previous_overwrite_verified") else None,
+                "prev_extra": dict(data.get("previous_overwrite_extra")) if data.get("previous_overwrite_extra") else None
             }
     
     try:
@@ -277,6 +279,7 @@ def load_lockdowns_from_disk() -> dict:
                 prev_everyone = None
                 prev_member = None
                 prev_verified = None
+                prev_extra = None
 
                 try:
                     if data.get("prev_everyone") is not None:
@@ -296,11 +299,18 @@ def load_lockdowns_from_disk() -> dict:
                 except Exception:
                     prev_verified = None
 
+                try:
+                    if data.get("prev_extra") is not None:
+                        prev_extra = PermissionOverwrite(**data.get("prev_verified"))
+                except Exception:
+                    prev_extra = None
+
                 live_lockdowns[guild_id][channel_id] = {
                     "unlock_at": unlock_at,
                     "previous_overwrite_everyone": prev_everyone,
                     "previous_overwrite_member": prev_member,
                     "previous_overwrite_verified": prev_verified,
+                    "previous_overwrite_extra": prev_extra,
                     "task": None,
                 }
         return live_lockdowns
@@ -765,10 +775,11 @@ def log_violation(user: discord.User, url: str):
     except Exception as e:
         log_error(f"Failed to log violation: {e}")
 
-async def _unlock_channel_logic(guild: discord.Guild, channel: discord.TextChannel, prev_everyone, prev_member, prev_verified, prev_moderator, reason: str):
+async def _unlock_channel_logic(guild: discord.Guild, channel: discord.TextChannel, prev_everyone, prev_member, prev_verified, prev_extra, prev_moderator, reason: str):
     everyone = guild.default_role
     member_role = guild.get_role(MEMBER_ROLE_ID) if MEMBER_ROLE_ID else None
     verified_role = guild.get_role(VERIFIED_ROLE_ID) if VERIFIED_ROLE_ID else None
+    extra_role = guild.get_role(EXTRA_ROLE_ID) if EXTRA_ROLE_ID else None
     moderator_role = guild.get_role(MODERATOR_ROLE_ID) if MODERATOR_ROLE_ID else None
 
     try:
@@ -788,6 +799,12 @@ async def _unlock_channel_logic(guild: discord.Guild, channel: discord.TextChann
                 await channel.set_permissions(verified_role, overwrite=None, reason=reason)
             else:
                 await channel.set_permissions(verified_role, overwrite=prev_verified, reason=reason)
+        
+        if extra_role:
+            if prev_extra is None:
+                await channel.set_permissions(extra_role, overwrite=None, reason=reason)
+            else:
+                await channel.set_permissions(extra_role, overwrite=prev_extra, reason=reason)
 
         if moderator_role:
             if prev_moderator is None:
@@ -807,13 +824,13 @@ async def _unlock_channel_logic(guild: discord.Guild, channel: discord.TextChann
             lockdowns.pop(guild.id, None)
         save_lockdowns_to_disk(lockdowns)
 
-async def auto_unlock(guild: discord.Guild, channel: discord.TextChannel, prev_everyone, prev_member, prev_verified, prev_moderator, delay: float):
+async def auto_unlock(guild: discord.Guild, channel: discord.TextChannel, prev_everyone, prev_member, prev_verified, prev_extra, prev_moderator, delay: float):
     try:
         if delay > 0:
             await asyncio.sleep(delay)
         
         log_info(f"Auto-unlocking channel {channel.id} in guild {guild.id}")
-        await _unlock_channel_logic(guild, channel, prev_everyone, prev_member, prev_verified, prev_moderator, reason="Lockdown expired")
+        await _unlock_channel_logic(guild, channel, prev_everyone, prev_member, prev_verified, prev_extra, prev_moderator, reason="Lockdown expired")
 
     except asyncio.CancelledError:
         log_info(f"Auto-unlock for channel {channel.id} was cancelled.")
@@ -1269,16 +1286,17 @@ async def on_ready():
             prev_everyone = data["previous_overwrite_everyone"]
             prev_member = data["previous_overwrite_member"]
             prev_verified = data["previous_overwrite_verified"]
+            prev_extra = data["previous_overwrite_extra"]
             
             if unlock_at <= now:
                 log_info(f"Lockdown for {channel.name} expired while offline. Unlocking now.")
-                await _unlock_channel_logic(guild, channel, prev_everyone, prev_member, prev_verified, reason="Lockdown expired (offline)")
+                await _unlock_channel_logic(guild, channel, prev_everyone, prev_member, prev_verified, prev_extra, reason="Lockdown expired (offline)")
             else:
                 remaining_seconds = (unlock_at - now).total_seconds()
                 log_info(f"Resuming lockdown for {channel.name}. Unlocking in {remaining_seconds:.0f}s.")
                 
                 task = client.loop.create_task(
-                    auto_unlock(guild, channel, prev_everyone, prev_member, prev_verified, delay=remaining_seconds)
+                    auto_unlock(guild, channel, prev_everyone, prev_member, prev_verified, prev_extra, delay=remaining_seconds)
                 )
                 lockdowns[guild_id][channel_id]["task"] = task
                 
@@ -2543,6 +2561,7 @@ async def lockdown(interaction: discord.Interaction, duration: str, reason: str 
     everyone = interaction.guild.default_role
     member_role = guild.get_role(MEMBER_ROLE_ID)
     verified_role = guild.get_role(VERIFIED_ROLE_ID)
+    extra_role = guild.get_role(EXTRA_ROLE_ID)
     moderator_role = guild.get_role(MODERATOR_ROLE_ID)
 
     # ensure per-guild map exists
@@ -2554,6 +2573,7 @@ async def lockdown(interaction: discord.Interaction, duration: str, reason: str 
     prev_everyone = channel.overwrites_for(everyone)
     prev_member = channel.overwrites_for(member_role) if member_role else None
     prev_verified = channel.overwrites_for(verified_role) if verified_role else None
+    prev_extra = channel.overwrites_for(extra_role) if extra_role else None
     prev_moderator = channel.overwrites_for(moderator_role) if moderator_role else None
 
     # avoid mutating the original overwrites
@@ -2589,6 +2609,17 @@ async def lockdown(interaction: discord.Interaction, duration: str, reason: str 
         overwrite_verified.send_messages_in_threads = False
         await channel.set_permissions(verified_role, overwrite=overwrite_verified, reason=f"Lockdown by {interaction.user} - {reason}")
 
+    if extra_role:
+        if prev_extra is not None:
+            overwrite_extra = PermissionOverwrite(**dict(prev_extra))
+        else:
+            overwrite_extra = PermissionOverwrite()
+        overwrite_extra.send_messages = False
+        overwrite_extra.create_public_threads = False
+        overwrite_extra.create_private_threads = False
+        overwrite_extra.send_messages_in_threads = False
+        await channel.set_permissions(extra_role, overwrite=overwrite_extra, reason=f"Lockdown by {interaction.user} - {reason}")
+
     if moderator_role:
         if prev_moderator is not None:
             overwrite_moderator = PermissionOverwrite(**dict(prev_moderator))
@@ -2605,13 +2636,14 @@ async def lockdown(interaction: discord.Interaction, duration: str, reason: str 
 
     unlock_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
 
-    task = client.loop.create_task(auto_unlock(guild, channel, prev_everyone, prev_member, prev_verified, prev_moderator, delay=seconds))
+    task = client.loop.create_task(auto_unlock(guild, channel, prev_everyone, prev_member, prev_verified, prev_extra, prev_moderator, delay=seconds))
     guild_locks[channel.id] = {
         "task": task,
         "unlock_at": unlock_at,
         "previous_overwrite_everyone": prev_everyone,
         "previous_overwrite_member": prev_member,
         "previous_overwrite_verified": prev_verified,
+        "previous_overwrite_extra": prev_extra,
         "previous_overwrite_moderator": prev_moderator
     }
 
@@ -2646,12 +2678,13 @@ async def unlock(interaction: discord.Interaction):
     everyone = interaction.guild.default_role
     member_role = interaction.guild.get_role(MEMBER_ROLE_ID)
     verified_role = interaction.guild.get_role(VERIFIED_ROLE_ID)
+    extra_role = interaction.guild.get_role(EXTRA_ROLE_ID)
     moderator_role = interaction.guild.get_role(MODERATOR_ROLE_ID)
-
 
     prev_everyone = data.get("previous_overwrite_everyone")
     prev_member = data.get("previous_overwrite_member")
     prev_verified = data.get("previous_overwrite_verified")
+    prev_extra = data.get("previous_overwrite_extra")
     prev_moderator = data.get("previous_overwrite_moderator")
 
     if prev_everyone is None:
@@ -2670,11 +2703,12 @@ async def unlock(interaction: discord.Interaction):
             await channel.set_permissions(verified_role, overwrite=None, reason=f"Manual unlock by {interaction.user}")
         else:
             await channel.set_permissions(verified_role, overwrite=prev_verified, reason=f"Manual unlock by {interaction.user}")
-
-    if moderator_role:
-        if prev_moderator is None:
-            await channel.set_permissions(moderator_role, overwrite=None, reason=f"Manual unlock by {interaction.user}")
+    
+    if extra_role:
+        if prev_extra is None:
+            await channel.set_permissions(extra_role, overwrite=None, reason=f"Manual unlock by {interaction.user}")
         else:
+            await channel.set_permissions(extra_role, overwrite=prev_extra, reason=f"Manual unlock by {interaction.user}")
             await channel.set_permissions(moderator_role, overwrite=prev_moderator, reason=f"Manual unlock by {interaction.user}")
 
     await interaction.response.send_message("Channel manually unlocked.")
