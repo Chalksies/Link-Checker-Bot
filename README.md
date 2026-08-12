@@ -29,6 +29,9 @@
 - Moderation tools are implemented with slash commands.
 ----------------------------------------
 > [!WARNING]
-> This bot is in active development. Expect errors.
+> This bot is not completed software. Expect errors.
+----------------------------------------
+> [!WARNING]
+> The code in this repository sucks. View/use at your own discretion.
 ----------------------------------------
 *Made for r/traaaaaaannnnnnnnnns2 official Discord server by Chalk.*
