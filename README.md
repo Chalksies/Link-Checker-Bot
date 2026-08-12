@@ -34,4 +34,4 @@
 > [!WARNING]
 > The code in this repository sucks. Viewer discretion is advised.
 ----------------------------------------
-*Made for r/traaaaaaannnnnnnnnns2 official Discord server by Chalk.*
+*Made for Small Building Discord server by Chalk.*
