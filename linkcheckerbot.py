@@ -67,7 +67,7 @@ DEFAULT_STATS = {
 }
 
 CONFIG_PATH = "config.toml"
-TEMPLATE_CONFIG = 'config.example.toml'
+TEMPLATE_CONFIG = 'config.default.toml'
 
 if not os.path.exists(CONFIG_PATH):
     print(f"Warning: {CONFIG_PATH} not found!")
@@ -861,12 +861,12 @@ async def virustotal_lookup(session, url, channel, guild: discord.Guild):
     #fetch report using base64url-encoded url
     report_url = f"{scan_url}/{vt_url_id(url)}"
     
-    for attempt in range(2):
+    for attempt in range(3):
         async with session.get(report_url, headers=headers) as resp:
             if resp.status == 200:
                 report = await resp.json()
                 break
-            elif resp.status == 404 and attempt == 0:
+            elif resp.status == 404 and attempt < 3:
                 print(f"Report not ready for {url} (404), retrying...")
                 await asyncio.sleep(SCAN_SLEEP)
                 continue
@@ -918,7 +918,7 @@ async def virustotal_scan_file(session, file_bytes, filename, channel, guild: di
     while True:
         await asyncio.sleep(SCAN_SLEEP)
         async with session.get(analysis_url, headers=headers) as resp:
-            if resp.status == 404 & attempt == 0:
+            if resp.status == 404 and attempt < 3:
                 log_info(f"Analysis report not ready for {filename} (404). Retrying...")
                 attempt += 1
                 continue
