@@ -7,3 +7,5 @@ config.toml
 shortener.json
 stats.json
 violations.json
+__pycache__/
+*.pyc
