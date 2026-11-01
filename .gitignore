@@ -1,4 +1,4 @@
-.botvenv/
+.*venv/
 .vscode/
 listmigrator.py
 logs/
